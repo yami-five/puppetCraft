@@ -1,15 +1,15 @@
 {
     "spritesPath":"sprites",
     "label":"mascot",
-    "x": 0,
-    "y":0,
+    "x": 120,
+    "y":320,
     "bones":
     [
         {
             "label":"mascotBone",
             "x":0,
-            "y":0,
-            "spriteIndex":4,
+            "y":-220,
+            "spriteIndex":2,
             "childBonesLayer1":[],
             "childBonesLayer2":[]
         }
