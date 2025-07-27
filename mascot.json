@@ -1,0 +1,16 @@
+{
+    "label":"mascot",
+    "x": 0,
+    "y":0,
+    "bones":
+    [
+        {
+            "label":"",
+            "x":0,
+            "y":0,
+            "spriteIndex":4,
+            "childBonesLayer1":[],
+            "childBonesLayer2":[]
+        }
+    ]
+}

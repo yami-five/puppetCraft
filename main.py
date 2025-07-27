@@ -1,22 +1,6 @@
 import pygame
 from enum import Enum
-
-class Bone:
-    def __init__(self,x,y,spriteIndex,childBonesLayer1,childBonesLayer1Num,childBonesLayer2,childBonesLayer2Num):
-        self.x=x
-        self.y=y
-        self.spriteIndex=spriteIndex
-        self.childBonesLayer1=childBonesLayer1
-        self.childBonesLayer1Num=childBonesLayer1Num
-        self.childBonesLayer2=childBonesLayer2
-        self.childBonesLayer2Num=childBonesLayer2Num
-
-class Puppet:
-    def __init__(self,x,y,bones,bonesNum):
-        self.x=x
-        self.y=y
-        self.bones=bones
-        self.bonesNum=bonesNum
+import puppetImporter
 
 class Canvas:
     def __init__(self,height,width,screen):
