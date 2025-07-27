@@ -1,6 +1,6 @@
 import pygame
 from enum import Enum
-import puppetImporter
+import puppetImporter, spritesLoader
 
 class Canvas:
     def __init__(self,height,width,screen):

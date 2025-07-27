@@ -1,11 +1,12 @@
 {
+    "spritesPath":"sprites",
     "label":"mascot",
     "x": 0,
     "y":0,
     "bones":
     [
         {
-            "label":"",
+            "label":"mascotBone",
             "x":0,
             "y":0,
             "spriteIndex":4,

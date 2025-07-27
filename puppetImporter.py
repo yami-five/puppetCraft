@@ -1,31 +1,31 @@
-import json 
+import json
+import spritesLoader
 
 class Bone:
-    def __init__(self,label,x,y,spriteIndex,childBonesLayer1,childBonesLayer1Num,childBonesLayer2,childBonesLayer2Num):
-        self.label=label
-        self.x=x
-        self.y=y
-        self.spriteIndex=spriteIndex
-        self.childBonesLayer1=childBonesLayer1
-        self.childBonesLayer1Num=childBonesLayer1Num
-        self.childBonesLayer2=childBonesLayer2
-        self.childBonesLayer2Num=childBonesLayer2Num
+    def __init__(self,boneJson,sprites):
+        self.label=boneJson["label"]
+        self.x=boneJson["x"]
+        self.y=boneJson["y"]
+        self.sprite=sprites[boneJson["spriteIndex"]]
 
 class Puppet:
-    def __init__(self,label,x,y,bones,bonesNum):
-        self.label=label
-        self.x=x
-        self.y=y
-        self.bones=bones
-        self.bonesNum=bonesNum
+    def __init__(self,puppetJson,sprites):
+        self.label=puppetJson["label"]
+        self.x=puppetJson["x"]
+        self.y=puppetJson["y"]
+        self.bones=[]
+        for boneJson in puppetJson["bones"]:  
+            self.bones.append(Bone(boneJson,sprites))
+        self.bonesNum=len(self.bones)
         
-def createPuppet(puppetFile):
-    return Puppet(puppetFile["label"],puppetFile["x"],puppetFile["y"],puppetFile["bones"],len(puppetFile["bones"]))
+def createPuppet(puppetFile,sprites):
+    return Puppet(puppetFile,sprites)
         
 def importPuppetFromJson(fileName):
     with open(fileName,"r") as f:
         puppetFile = json.load(f)
-        puppet=createPuppet(puppetFile)
+        sprites=spritesLoader.importSprites(puppetFile["spritesPath"])
+        puppet=createPuppet(puppetFile,sprites)
         print(puppet.label)
         print(puppet.x)
         print(puppet.y)
