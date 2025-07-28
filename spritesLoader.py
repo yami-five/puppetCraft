@@ -1,11 +1,5 @@
-import json,os
+import json,os,puppet
 from PIL import Image 
-
-class Sprite:
-    def __init__(self,label,size,pixels):
-        self.label=label
-        self.size=size
-        self.pixels=pixels
 
 def getSpriteLabel(path):
     spriteLabel=path.replace("_"," ")
@@ -32,7 +26,7 @@ def importSprites(path):
                 # b5 = b >> 3
                 # rgb565 = (r5 << 11) | (g6 << 5) | b5
                 converted_img.append(image.getpixel((x, y)))
-        sprites.append(Sprite(getSpriteLabel(bmpFile),img_x,converted_img))
+        sprites.append(puppet.Sprite(getSpriteLabel(bmpFile),img_x,converted_img))
     return sprites
         
 

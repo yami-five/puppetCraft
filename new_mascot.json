@@ -1,0 +1,44 @@
+{
+    "spritesPath": "sprites",
+    "label": "mascot",
+    "x": 119,
+    "y": 288,
+    "bones": [
+        [
+            {
+                "label": "mascotBone",
+                "x": 0,
+                "y": -220,
+                "spriteIndex": 4,
+                "childBonesLayer1": [
+                    {
+                        "label": "mascotSkullParent",
+                        "x": 0,
+                        "y": -220,
+                        "spriteIndex": -1,
+                        "childBonesLayer1": [],
+                        "childBonesLayer2": []
+                    },
+                    {
+                        "label": "mascotReflection",
+                        "x": 0,
+                        "y": -220,
+                        "spriteIndex": -1,
+                        "childBonesLayer1": [],
+                        "childBonesLayer2": []
+                    }
+                ],
+                "childBonesLayer2": [
+                    {
+                        "label": "mascotArmParent",
+                        "x": 0,
+                        "y": -220,
+                        "spriteIndex": -1,
+                        "childBonesLayer1": [],
+                        "childBonesLayer2": []
+                    }
+                ]
+            }
+        ]
+    ]
+}
