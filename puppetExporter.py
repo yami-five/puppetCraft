@@ -6,11 +6,11 @@ def add_bones(bones):
         data.append(bones[i].get_bone_dict())
     return data
 
-def save_to_file(puppet,settings):
-    if(os.path.exists(f'{puppet.label}_backup.json')):
-        os.remove(f'{puppet.label}_backup.json')
-    os.rename(f'{puppet.label}.json',f'{puppet.label}_backup.json')
-    with open(f'{puppet.label}.json',"w") as f:
+def save_to_file(puppet,settings,filename):
+    if(os.path.exists(f'{filename}_backup.json')):
+        os.remove(f'{filename}_backup.json')
+    os.rename(f'{filename}.json',f'{filename}_backup.json')
+    with open(f'{filename}.json',"w") as f:
         data = puppet.get_puppet_dict()
         data["bones"]=add_bones(puppet.bones)
         json.dump(data, f, indent=4, ensure_ascii=False)

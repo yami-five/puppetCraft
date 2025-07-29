@@ -11,10 +11,12 @@ class Bone:
         self.label=boneJson["label"]
         self.x=boneJson["x"]
         self.y=boneJson["y"]
+        self.angle=boneJson["angle"]
         self.spriteIndex=boneJson["spriteIndex"]
+        self.baseSpriteRotation=boneJson["baseSpriteRotation"]
         if(self.spriteIndex>=0):
             self.sprite=sprites[self.spriteIndex]
-        self.localMatrix=numpy.array([[math.cos(0),-math.sin(0),self.x],[math.sin(0),math.cos(0),self.y],[0,0,1]])
+        self.localMatrix=numpy.array([[math.cos(self.angle),-math.sin(self.angle),int(round(self.x))],[math.sin(self.angle),math.cos(self.angle),int(round(self.y))],[0,0,1]])
         self.worldMatrix=parentWorldMatrix @ self.localMatrix
         self.childBonesLayer1=[]
         self.childBonesLayer2=[]
@@ -28,7 +30,9 @@ class Bone:
             "label":self.label,
             "x": self.x,
             "y": self.y,
+            "angle": self.angle,
             "spriteIndex": self.spriteIndex,
+            "baseSpriteRotation": self.baseSpriteRotation,
             "childBonesLayer1": [],
             "childBonesLayer2": [],
         }
@@ -39,7 +43,7 @@ class Bone:
         return data
     
     def recalculate_world_matrices(self,parentWorldMatrix):
-        self.localMatrix=numpy.array([[math.cos(0),-math.sin(0),self.x],[math.sin(0),math.cos(0),self.y],[0,0,1]])
+        self.localMatrix=numpy.array([[math.cos(self.angle),-math.sin(self.angle),int(round(self.x))],[math.sin(self.angle),math.cos(self.angle),int(round(self.y))],[0,0,1]])
         self.worldMatrix=parentWorldMatrix @ self.localMatrix
         for bone in self.childBonesLayer1:
             bone.recalculate_world_matrices(self.worldMatrix)
@@ -51,8 +55,9 @@ class Puppet:
         self.label=puppetJson["label"]
         self.x=puppetJson["x"]
         self.y=puppetJson["y"]
+        self.angle=puppetJson["angle"]
         self.bones=[]
-        self.localMatrix=numpy.array([[math.cos(0),-math.sin(0),self.x],[math.sin(0),math.cos(0),self.y],[0,0,1]])
+        self.localMatrix=numpy.array([[math.cos(self.angle),-math.sin(self.angle),int(round(self.x))],[math.sin(self.angle),math.cos(self.angle),int(round(self.y))],[0,0,1]])
         self.worldMatrix=self.localMatrix
         for boneJson in puppetJson["bones"]:  
             self.bones.append(Bone(boneJson,sprites,self.worldMatrix))
@@ -64,11 +69,12 @@ class Puppet:
             "label":self.label,
             "x": self.x,
             "y": self.y,
+            "angle": self.angle,
             "bones": []
         }
     
     def recalculate_world_matrices(self):
-        self.localMatrix=numpy.array([[math.cos(0),-math.sin(0),self.x],[math.sin(0),math.cos(0),self.y],[0,0,1]])
+        self.localMatrix=numpy.array([[math.cos(self.angle),-math.sin(self.angle),int(round(self.x))],[math.sin(self.angle),math.cos(self.angle),int(round(self.y))],[0,0,1]])
         self.worldMatrix=self.localMatrix
         for bone in self.bones:
             bone.recalculate_world_matrices(self.worldMatrix)
