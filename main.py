@@ -5,7 +5,7 @@ settings={
     "isBoneVisible": True
 }
 objects=[]
-activeBone=""
+activeBone=puppet=puppetImporter.importPuppetFromJson("mascot.json")
 buttonLocations=[]
 
 class Canvas:
@@ -112,30 +112,38 @@ def change_active_bone_with_offset(activeBone,offset):
 def change_active_bone(boneName):
     for bone in objects:
         if(bone.label==boneName):
+            global activeBone
             activeBone=bone
             break
 
-def handle_mouse_event(x,y):
+def change_setting_state(settingName):
+    global settings
+    for key,value in settings.items():
+        if(key==settingName):
+            settings[key]=not settings[key]
+
+def handle_mouse_event(mousePos):
+    x,y=mousePos
     for button in buttonLocations:
         if(button["rect"].collidepoint(x,y)):
-            button["action"](*button("args"))
+            button["action"](*button["args"])
 
 def set_buttons_locations(width,heigth):
     for i in range(len(objects)):
         buttonLocations.append(
             {
-                "rect":pygame.rect(width-234,i*20+26,7,7),
+                "rect":pygame.Rect(width-234,i*20+26,7,7),
                 "action":change_active_bone,
-                "args":objects[i].label
+                "args":(objects[i].label,)
             }
         )
     i=0
     for key,value in settings.items():
         buttonLocations.append(
             {
-                "rect":pygame.rect(i*240+6,heigth-14,7,7),
-                "action":change_active_bone,
-                "args":key
+                "rect":pygame.Rect(i*240+6,heigth-14,7,7),
+                "action":change_setting_state,
+                "args":(key,)
             }
         )
         i+=1
@@ -147,10 +155,10 @@ if(__name__ == "__main__"):
             
                 
     pygame.init()
-    puppet=puppetImporter.importPuppetFromJson("mascot.json")
-    activeBone=puppet
     width, height = 1280, 720
     canvas_h, canvas_w = 320, 240
+    save_puppet_to_list(puppet)
+    set_buttons_locations(width,height)
     scale=2
     screen=pygame.display.set_mode((width,height))
     canvas=Canvas(320,240,screen)
@@ -168,7 +176,6 @@ if(__name__ == "__main__"):
     running=True
     clicked=False
     ui=userInterface.UI(screen,objects)
-    save_puppet_to_list(puppet)
     while running:
         for event in pygame.event.get():
             if event.type == pygame.MOUSEBUTTONDOWN:
