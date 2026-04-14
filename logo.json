@@ -1,0 +1,73 @@
+{
+    "spritesPath": "sprites_logo",
+    "label": "logoRoot",
+    "x": 120,
+    "y": 225,
+    "angle": 0.0,
+    "bones": [
+        {
+            "label": "logoBone",
+            "x": 0,
+            "y": -130,
+            "angle": 0.0,
+            "spriteIndex": 0,
+            "baseSpriteRotation": 0,
+            "childBonesLayer1": [
+                {
+                    "label": "logoCenter",
+                    "x": 0,
+                    "y": 65,
+                    "angle": 25.9,
+                    "spriteIndex": -1,
+                    "baseSpriteRotation": 0,
+                    "childBonesLayer1": [
+                        {
+                            "label": "moonParent",
+                            "x": -55,
+                            "y": 0,
+                            "angle": 0.0,
+                            "spriteIndex": -1,
+                            "baseSpriteRotation": 0,
+                            "childBonesLayer1": [
+                                {
+                                    "label": "moonBone",
+                                    "x": -65,
+                                    "y": 0,
+                                    "angle": 0.0,
+                                    "spriteIndex": 1,
+                                    "baseSpriteRotation": 2.53,
+                                    "childBonesLayer1": [],
+                                    "childBonesLayer2": []
+                                }
+                            ],
+                            "childBonesLayer2": []
+                        },
+                        {
+                            "label": "rocketParent",
+                            "x": 55,
+                            "y": 0,
+                            "angle": 0.0,
+                            "spriteIndex": -1,
+                            "baseSpriteRotation": 0,
+                            "childBonesLayer1": [
+                                {
+                                    "label": "rocketBone",
+                                    "x": 65,
+                                    "y": 0,
+                                    "angle": 0.0,
+                                    "spriteIndex": 2,
+                                    "baseSpriteRotation": -0.61,
+                                    "childBonesLayer1": [],
+                                    "childBonesLayer2": []
+                                }
+                            ],
+                            "childBonesLayer2": []
+                        }
+                    ],
+                    "childBonesLayer2": []
+                }
+            ],
+            "childBonesLayer2": []
+        }
+    ]
+}

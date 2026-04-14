@@ -65,13 +65,23 @@ class Puppet:
         
     def get_puppet_dict(self):
         return {
-            "spritesPath":"sprites",
+            "spritesPath":f"sprites_{(self.label).replace('Root','')}",
             "label":self.label,
             "x": self.x,
             "y": self.y,
             "angle": self.angle,
             "bones": []
         }
+    
+    # def convert_puppet_to_C(self):
+    #     return  'static const RawPuppet rawPuppets[] = {{' \
+    #             '    {{' \
+    #             f'        .x = {self.x},' \
+    #             f'        .y = {self.y},' \
+    #             f'        .bonesNum = {len(self.bones)},' \
+    #             f'        .bones = {self.bones},' \
+    #             '    },' \
+    #             '};'
     
     def recalculate_world_matrices(self):
         self.localMatrix=numpy.array([[math.cos(self.angle),-math.sin(self.angle),int(round(self.x))],[math.sin(self.angle),math.cos(self.angle),int(round(self.y))],[0,0,1]])
