@@ -1,8 +1,8 @@
 {
     "spritesPath": "sprites_mascot",
     "label": "mascotRoot",
-    "x": 120,
-    "y": 330,
+    "x": 160,
+    "y": 250,
     "angle": 0.0,
     "bones": [
         {
