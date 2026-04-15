@@ -1,3 +1,4 @@
 sprites/
 backup*
 .vscode/
+__pycache__/
