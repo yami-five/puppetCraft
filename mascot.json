@@ -7,24 +7,24 @@
     "bones": [
         {
             "label": "mascotBone",
-            "x": 0,
-            "y": -220,
+            "x": 0.0,
+            "y": -220.0,
             "angle": 0.0,
             "spriteIndex": 4,
             "baseSpriteRotation": 1.57,
             "childBonesLayer1": [
                 {
                     "label": "mascotSkullParent",
-                    "x": 0,
-                    "y": 55,
+                    "x": 0.0,
+                    "y": 55.0,
                     "angle": 0.0,
                     "spriteIndex": -1,
                     "baseSpriteRotation": 0.0,
                     "childBonesLayer1": [
                         {
                             "label": "mascotSkull",
-                            "x": 0,
-                            "y": -40,
+                            "x": 0.0,
+                            "y": -40.0,
                             "angle": 0.0,
                             "spriteIndex": 6,
                             "baseSpriteRotation": 1.57,
@@ -40,8 +40,8 @@
                                     "childBonesLayer1": [
                                         {
                                             "label": "mascotSkullJaw",
-                                            "x": 0,
-                                            "y": -18,
+                                            "x": 0.0,
+                                            "y": -18.0,
                                             "angle": 0.0,
                                             "spriteIndex": 7,
                                             "baseSpriteRotation": 1.57,
@@ -53,8 +53,8 @@
                                 },
                                 {
                                     "label": "mascotSkullEyesBack",
-                                    "x": 0,
-                                    "y": 45,
+                                    "x": 0.0,
+                                    "y": 45.0,
                                     "angle": 0.0,
                                     "spriteIndex": 8,
                                     "baseSpriteRotation": 0.0,
@@ -63,16 +63,16 @@
                                 },
                                 {
                                     "label": "mascotSkullLeftEyeParent",
-                                    "x": 10,
-                                    "y": 32,
+                                    "x": 10.0,
+                                    "y": 32.0,
                                     "angle": 0.0,
                                     "spriteIndex": -1,
                                     "baseSpriteRotation": 0.0,
                                     "childBonesLayer1": [
                                         {
                                             "label": "mascotSkullLeftEye",
-                                            "x": 0,
-                                            "y": -14,
+                                            "x": 0.0,
+                                            "y": -14.0,
                                             "angle": 0.0,
                                             "spriteIndex": 9,
                                             "baseSpriteRotation": 1.57,
@@ -84,16 +84,16 @@
                                 },
                                 {
                                     "label": "mascotSkullRightEyeParent",
-                                    "x": -1,
-                                    "y": 31,
+                                    "x": -1.0,
+                                    "y": 31.0,
                                     "angle": 0.0,
                                     "spriteIndex": -1,
                                     "baseSpriteRotation": 0.0,
                                     "childBonesLayer1": [
                                         {
                                             "label": "mascotSkullRightEye",
-                                            "x": 0,
-                                            "y": -13,
+                                            "x": 0.0,
+                                            "y": -13.0,
                                             "angle": 0.0,
                                             "spriteIndex": 10,
                                             "baseSpriteRotation": 1.57,
@@ -110,16 +110,16 @@
                 },
                 {
                     "label": "mascotReflectionParent",
-                    "x": 13,
-                    "y": 49,
+                    "x": 13.0,
+                    "y": 49.0,
                     "angle": 0.0,
                     "spriteIndex": -1,
                     "baseSpriteRotation": 0.0,
                     "childBonesLayer1": [
                         {
                             "label": "mascotReflection",
-                            "x": 0,
-                            "y": -25,
+                            "x": 0.0,
+                            "y": -25.0,
                             "angle": 0.0,
                             "spriteIndex": 5,
                             "baseSpriteRotation": 1.57,
@@ -135,15 +135,15 @@
                     "label": "mascotArmParent",
                     "x": 22.0,
                     "y": 78.0,
-                    "angle": 1.14,
+                    "angle": 1.1400000000000001,
                     "spriteIndex": -1,
                     "baseSpriteRotation": 0.0,
                     "childBonesLayer1": [],
                     "childBonesLayer2": [
                         {
                             "label": "mascotArm2",
-                            "x": 28,
-                            "y": 0,
+                            "x": 28.0,
+                            "y": 0.0,
                             "angle": 0.0,
                             "spriteIndex": 2,
                             "baseSpriteRotation": 0.0,
@@ -151,17 +151,17 @@
                             "childBonesLayer2": [
                                 {
                                     "label": "mascotArmElbow",
-                                    "x": 9,
-                                    "y": 3,
-                                    "angle": 0.0,
+                                    "x": 9.0,
+                                    "y": 3.0,
+                                    "angle": -3.885780586188048e-16,
                                     "spriteIndex": -1,
                                     "baseSpriteRotation": 0.0,
                                     "childBonesLayer1": [],
                                     "childBonesLayer2": [
                                         {
                                             "label": "mascotArm1",
-                                            "x": 44,
-                                            "y": 0,
+                                            "x": 44.0,
+                                            "y": 0.0,
                                             "angle": 0.0,
                                             "spriteIndex": 1,
                                             "baseSpriteRotation": 0.0,
@@ -169,16 +169,16 @@
                                             "childBonesLayer2": [
                                                 {
                                                     "label": "mascotWrist",
-                                                    "x": 0,
-                                                    "y": 3,
+                                                    "x": 0.0,
+                                                    "y": 3.0,
                                                     "angle": 0.0,
                                                     "spriteIndex": -1,
                                                     "baseSpriteRotation": 0.0,
                                                     "childBonesLayer1": [
                                                         {
                                                             "label": "mascotHand",
-                                                            "x": 34,
-                                                            "y": 0,
+                                                            "x": 34.0,
+                                                            "y": 0.0,
                                                             "angle": 0.0,
                                                             "spriteIndex": 3,
                                                             "baseSpriteRotation": 0.0,
@@ -202,6 +202,35 @@
     "animations": [
         {
             "animationName": "jawAnimation",
+            "tracks": [
+                {
+                    "boneLabel": "mascotSkullJawParent",
+                    "keyframes": [
+                        {
+                            "x": 1.0,
+                            "y": 47.0,
+                            "angle": 0.0,
+                            "label": "frame1",
+                            "timelineFrame": 0
+                        },
+                        {
+                            "x": -4.0,
+                            "y": 48.0,
+                            "angle": 0.4,
+                            "label": "frame2",
+                            "timelineFrame": 5
+                        },
+                        {
+                            "x": 1.0,
+                            "y": 47.0,
+                            "angle": -2.7755575615628914e-17,
+                            "label": "frame3",
+                            "timelineFrame": 10
+                        }
+                    ]
+                }
+            ],
+            "boneLabel": "mascotSkullJawParent",
             "keyframes": [
                 {
                     "x": 1.0,
@@ -224,31 +253,108 @@
                     "label": "frame3",
                     "timelineFrame": 10
                 }
-            ],
-            "boneLabel": "mascotSkullJawParent"
+            ]
         },
         {
             "animationName": "raisingArmParent",
-            "keyframes": [
+            "tracks": [
                 {
-                    "x": 22.0,
-                    "y": 78.0,
-                    "angle": 1.14,
-                    "label": "frame1",
-                    "timelineFrame": 0
+                    "boneLabel": "mascotArmElbow",
+                    "keyframes": [
+                        {
+                            "x": 9.0,
+                            "y": 3.0,
+                            "angle": 0.0,
+                            "label": "frame1",
+                            "timelineFrame": 0
+                        },
+                        {
+                            "x": 9.0,
+                            "y": 3.0,
+                            "angle": -2.1,
+                            "label": "frame2",
+                            "timelineFrame": 10
+                        },
+                        {
+                            "x": 9.0,
+                            "y": 3.0,
+                            "angle": 0.0,
+                            "label": "frame3",
+                            "timelineFrame": 20
+                        }
+                    ]
                 },
                 {
-                    "x": 23.0,
-                    "y": 79.0,
-                    "angle": 8.326672684688674e-17,
-                    "label": "frame2",
-                    "timelineFrame": 15
+                    "boneLabel": "mascotArmParent",
+                    "keyframes": [
+                        {
+                            "x": 22.0,
+                            "y": 78.0,
+                            "angle": 1.14,
+                            "label": "frame1",
+                            "timelineFrame": 0
+                        },
+                        {
+                            "x": 22.0,
+                            "y": 78.0,
+                            "angle": -0.06,
+                            "label": "frame2",
+                            "timelineFrame": 10
+                        },
+                        {
+                            "x": 22.0,
+                            "y": 78.0,
+                            "angle": 1.14,
+                            "label": "frame3",
+                            "timelineFrame": 20
+                        }
+                    ]
+                },
+                {
+                    "boneLabel": "mascotRoot",
+                    "keyframes": [
+                        {
+                            "x": 120.0,
+                            "y": 250.0,
+                            "angle": 0.0,
+                            "label": "frame1",
+                            "timelineFrame": 20
+                        }
+                    ]
                 }
-            ],
-            "boneLabel": "mascotArmParent"
+            ]
         },
         {
             "animationName": "waving",
+            "tracks": [
+                {
+                    "boneLabel": "",
+                    "keyframes": [
+                        {
+                            "x": 144.0,
+                            "y": 189.0,
+                            "angle": -2.0,
+                            "label": "frame1",
+                            "timelineFrame": 0
+                        },
+                        {
+                            "x": 144.0,
+                            "y": 189.0,
+                            "angle": -1.0,
+                            "label": "frame2",
+                            "timelineFrame": 10
+                        },
+                        {
+                            "x": 144.0,
+                            "y": 189.0,
+                            "angle": -2.0,
+                            "label": "frame3",
+                            "timelineFrame": 20
+                        }
+                    ]
+                }
+            ],
+            "boneLabel": "",
             "keyframes": [
                 {
                     "x": 144.0,

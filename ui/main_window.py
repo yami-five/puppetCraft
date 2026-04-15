@@ -69,6 +69,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.animation_clips = {}
         self.playback_clip_name = ""
         self.playback_poses = []
+        self.playback_track_poses = {}
+        self.playback_base_pose = {}
         self.playback_frame_index = 0
         self.playback_timeline_start = 0
         self._pending_timeline_frame = None
@@ -148,11 +150,11 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addLayout(timeline_row)
 
         bone_row = QtWidgets.QHBoxLayout()
-        bone_row.addWidget(QtWidgets.QLabel("Assigned Bone"))
+        bone_row.addWidget(QtWidgets.QLabel("Active Track"))
         self.anim_assigned_bone_label = QtWidgets.QLabel("-")
         self.anim_assigned_bone_label.setMinimumWidth(120)
         bone_row.addWidget(self.anim_assigned_bone_label, 1)
-        self.anim_assign_bone_button = QtWidgets.QPushButton("Assign Selected Bone")
+        self.anim_assign_bone_button = QtWidgets.QPushButton("Add Selected Bone Track")
         self.anim_assign_bone_button.clicked.connect(self._assign_animation_clip_bone)
         bone_row.addWidget(self.anim_assign_bone_button)
         layout.addLayout(bone_row)
@@ -237,41 +239,153 @@ class MainWindow(QtWidgets.QMainWindow):
                 clip_name = str(item.get("animationName", "")).strip()
                 if not clip_name:
                     continue
-                clip = {
-                    "keyframes": self._normalize_clip_keyframes(item.get("keyframes", []), item.get("duration")),
-                }
-                bone_label = item.get("boneLabel") or item.get("bone_label")
-                if bone_label:
-                    clip["boneLabel"] = str(bone_label)
-                clips[clip_name] = clip
+                clips[clip_name] = self._normalize_clip_data(item)
             return clips
 
         if isinstance(payload, dict):
             for clip_name, clip_data in payload.items():
                 if not isinstance(clip_data, dict):
                     continue
-                clip = {
-                    "keyframes": self._normalize_clip_keyframes(clip_data.get("keyframes", []), clip_data.get("duration")),
-                }
-                bone_label = clip_data.get("boneLabel") or clip_data.get("bone_label")
-                if bone_label:
-                    clip["boneLabel"] = str(bone_label)
-                clips[str(clip_name)] = clip
+                clips[str(clip_name)] = self._normalize_clip_data(clip_data)
         return clips
 
     def _serialize_animation_clips(self):
         animations = []
         for clip_name in sorted(self.animation_clips.keys()):
             clip = self.animation_clips.get(clip_name, {})
-            item = {
-                "animationName": clip_name,
-                "keyframes": clip.get("keyframes", []),
-            }
-            bone_label = clip.get("boneLabel")
-            if bone_label:
-                item["boneLabel"] = bone_label
+            tracks = self._clip_tracks(clip)
+            serialized_tracks = []
+            for bone_label in sorted(tracks.keys()):
+                keyframes = tracks.get(bone_label, [])
+                serialized_tracks.append(
+                    {
+                        "boneLabel": bone_label,
+                        "keyframes": keyframes,
+                    }
+                )
+
+            item = {"animationName": clip_name, "tracks": serialized_tracks}
+            if len(serialized_tracks) == 1:
+                item["boneLabel"] = serialized_tracks[0]["boneLabel"]
+                item["keyframes"] = serialized_tracks[0]["keyframes"]
             animations.append(item)
         return animations
+
+    def _normalize_clip_data(self, source):
+        clip = {"tracks": {}}
+        if not isinstance(source, dict):
+            return clip
+
+        tracks = clip["tracks"]
+        raw_tracks = source.get("tracks")
+
+        if isinstance(raw_tracks, list):
+            for track_item in raw_tracks:
+                if not isinstance(track_item, dict):
+                    continue
+                bone_label = str(track_item.get("boneLabel") or track_item.get("bone_label") or "").strip()
+                tracks[bone_label] = self._normalize_clip_keyframes(
+                    track_item.get("keyframes", []),
+                    track_item.get("duration"),
+                )
+        elif isinstance(raw_tracks, dict):
+            for raw_bone_label, track_item in raw_tracks.items():
+                bone_label = str(raw_bone_label).strip()
+                if isinstance(track_item, dict):
+                    keyframes_source = track_item.get("keyframes", [])
+                    duration_source = track_item.get("duration")
+                else:
+                    keyframes_source = track_item
+                    duration_source = None
+                tracks[bone_label] = self._normalize_clip_keyframes(keyframes_source, duration_source)
+
+        legacy_keyframes = source.get("keyframes")
+        legacy_bone_label = str(source.get("boneLabel") or source.get("bone_label") or "").strip()
+        if isinstance(legacy_keyframes, list):
+            merged = list(tracks.get(legacy_bone_label, []))
+            merged.extend(self._normalize_clip_keyframes(legacy_keyframes, source.get("duration")))
+            tracks[legacy_bone_label] = self._normalize_clip_keyframes(merged)
+        return clip
+
+    def _clip_tracks(self, clip):
+        if not isinstance(clip, dict):
+            return {}
+        tracks = clip.get("tracks")
+        if isinstance(tracks, dict):
+            return tracks
+        tracks = {}
+        clip["tracks"] = tracks
+        return tracks
+
+    def _clip_timeline_values(self, clip):
+        values = []
+        tracks = self._clip_tracks(clip)
+        for keyframes in tracks.values():
+            if not isinstance(keyframes, list):
+                continue
+            for keyframe in keyframes:
+                try:
+                    values.append(int(keyframe.get("timelineFrame", 0)))
+                except Exception:
+                    continue
+        return values
+
+    def _clip_timeline_bounds(self, clip):
+        values = self._clip_timeline_values(clip)
+        if not values:
+            return None, None
+        return min(values), max(values)
+
+    def _capture_playback_base_pose(self):
+        base = {}
+        for bone in self.bones:
+            base[bone.label] = {
+                "x": float(bone.x),
+                "y": float(bone.y),
+                "angle": float(bone.angle),
+            }
+        self.playback_base_pose = base
+
+    def _keyframes_timeline_bounds(self, keyframes):
+        if not isinstance(keyframes, list) or not keyframes:
+            return None, None
+        values = []
+        for keyframe in keyframes:
+            try:
+                values.append(int(keyframe.get("timelineFrame", 0)))
+            except Exception:
+                continue
+        if not values:
+            return None, None
+        return min(values), max(values)
+
+    def _interpolate_absolute_poses(self, keyframes):
+        ordered = self._normalize_clip_keyframes(keyframes)
+        if not ordered:
+            return []
+        if len(ordered) == 1:
+            only = ordered[0]
+            return [{"x": float(only.get("x", 0.0)), "y": float(only.get("y", 0.0)), "angle": float(only.get("angle", 0.0))}]
+
+        poses = [{"x": float(ordered[0]["x"]), "y": float(ordered[0]["y"]), "angle": float(ordered[0]["angle"])}]
+        for idx in range(len(ordered) - 1):
+            start = ordered[idx]
+            end = ordered[idx + 1]
+            start_frame = int(start.get("timelineFrame", 0))
+            end_frame = int(end.get("timelineFrame", 0))
+            span = end_frame - start_frame
+            if span <= 0:
+                continue
+            for step in range(1, span + 1):
+                alpha = step / span
+                poses.append(
+                    {
+                        "x": float(start["x"]) + (float(end["x"]) - float(start["x"])) * alpha,
+                        "y": float(start["y"]) + (float(end["y"]) - float(start["y"])) * alpha,
+                        "angle": float(start["angle"]) + (float(end["angle"]) - float(start["angle"])) * alpha,
+                    }
+                )
+        return poses
 
     def _normalize_clip_keyframes(self, keyframes, legacy_duration=None):
         if not isinstance(keyframes, list):
@@ -367,7 +481,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.anim_existing_clip_combo.addItems(clip_names)
         if clip_names:
             if current in clip_names:
-                self.anim_existing_clip_combo.setCurrentText(current)
+                idx = self.anim_existing_clip_combo.findText(current)
+                self.anim_existing_clip_combo.setCurrentIndex(idx if idx >= 0 else 0)
             else:
                 self.anim_existing_clip_combo.setCurrentIndex(0)
         self.anim_existing_clip_combo.blockSignals(False)
@@ -381,8 +496,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.anim_clip_name_edit.setText(clip_name)
         self.anim_clip_name_edit.blockSignals(False)
         clip = self.animation_clips.get(clip_name)
-        if clip and clip.get("keyframes"):
-            first_frame = int(clip["keyframes"][0].get("timelineFrame", 0))
+        first_frame, _ = self._clip_timeline_bounds(clip)
+        if first_frame is not None:
             self.anim_timeline_spin.blockSignals(True)
             self.anim_timeline_spin.setValue(first_frame)
             self.anim_timeline_spin.blockSignals(False)
@@ -442,27 +557,43 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         clip = self.animation_clips.get(clip_name)
         if clip is None:
-            clip = {"keyframes": []}
+            clip = {"tracks": {}}
             self.animation_clips[clip_name] = clip
-        clip["boneLabel"] = self.active_bone.label
+        tracks = self._clip_tracks(clip)
+        tracks.setdefault(self.active_bone.label, [])
         self._update_animation_editor_state()
-        self._refresh_timeline_clips(preferred_clip=clip_name)
+        self._refresh_timeline_clips(preferred_clip=clip_name, preferred_frame=self.anim_timeline_spin.value())
 
     def _update_animation_editor_state(self):
         clip_name = self._current_clip_name()
         clip = self.animation_clips.get(clip_name) if clip_name else None
 
         if clip:
-            keyframes_count = len(clip.get("keyframes", []))
-            timeline_values = [int(kf.get("timelineFrame", 0)) for kf in clip.get("keyframes", [])]
+            tracks = self._clip_tracks(clip)
+            track_names = sorted(tracks.keys())
+            keyframes_count = sum(len(keyframes) for keyframes in tracks.values() if isinstance(keyframes, list))
+            timeline_values = self._clip_timeline_values(clip)
             if timeline_values:
                 timeline_range = f"{min(timeline_values)}-{max(timeline_values)}"
             else:
                 timeline_range = "-"
-            assigned_bone = clip.get("boneLabel") or "-"
-            self.anim_assigned_bone_label.setText(str(assigned_bone))
-            self.anim_clip_info_label.setText(f"Keyframes: {keyframes_count} | Timeline: {timeline_range}")
-            self.anim_remove_keyframe_button.setEnabled(keyframes_count > 0)
+
+            active_track_count = 0
+            active_track_label = "-"
+            if self.active_bone is not None:
+                active_label = self.active_bone.label
+                active_track = tracks.get(active_label)
+                if active_track is not None:
+                    active_track_count = len(active_track)
+                    active_track_label = f"{active_label} ({active_track_count} frames)"
+                else:
+                    active_track_label = f"{active_label} (not in clip)"
+
+            self.anim_assigned_bone_label.setText(active_track_label)
+            self.anim_clip_info_label.setText(
+                f"Tracks: {len(track_names)} | Keyframes: {keyframes_count} | Timeline: {timeline_range}"
+            )
+            self.anim_remove_keyframe_button.setEnabled(active_track_count > 0)
             self.anim_clear_clip_button.setEnabled(True)
             self.anim_assign_bone_button.setEnabled(self.active_bone is not None)
             self.anim_rename_clip_button.setEnabled(True)
@@ -485,14 +616,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timeline_clip_combo.blockSignals(False)
 
         if clip_names:
+            self.timeline_clip_combo.blockSignals(True)
             if current in clip_names:
-                self.timeline_clip_combo.setCurrentText(current)
+                idx = self.timeline_clip_combo.findText(current)
+                self.timeline_clip_combo.setCurrentIndex(idx if idx >= 0 else 0)
             else:
                 self.timeline_clip_combo.setCurrentIndex(0)
+            self.timeline_clip_combo.blockSignals(False)
             self._on_timeline_clip_changed(self.timeline_clip_combo.currentIndex())
         else:
             self.playback_clip_name = ""
             self.playback_poses = []
+            self.playback_track_poses = {}
+            self.playback_base_pose = {}
+            self.playback_timeline_start = 0
             self._pending_timeline_frame = None
             self.timeline_slider.setRange(0, 0)
             self.timeline_slider.set_keyframe_positions([])
@@ -515,26 +652,11 @@ class MainWindow(QtWidgets.QMainWindow):
         timeline_frame = self.anim_timeline_spin.value()
         clip = self.animation_clips.get(clip_name)
         if clip is None:
-            clip = {"keyframes": []}
+            clip = {"tracks": {}}
             self.animation_clips[clip_name] = clip
 
-        assigned_bone = str(clip.get("boneLabel") or "").strip()
-        if not assigned_bone:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Animation",
-                f'Clip "{clip_name}" has no assigned bone. Click "Assign Selected Bone" first.',
-            )
-            return
-        if assigned_bone != self.active_bone.label:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Animation",
-                f'Clip "{clip_name}" is assigned to bone "{assigned_bone}". Select that bone or click "Assign Selected Bone".',
-            )
-            return
-
-        keyframes = clip.setdefault("keyframes", [])
+        tracks = self._clip_tracks(clip)
+        keyframes = tracks.setdefault(self.active_bone.label, [])
         existing = next((kf for kf in keyframes if int(kf.get("timelineFrame", -1)) == timeline_frame), None)
         if existing is None:
             keyframes.append(
@@ -560,22 +682,33 @@ class MainWindow(QtWidgets.QMainWindow):
     def _remove_animation_keyframe(self):
         clip_name = self._current_clip_name()
         clip = self.animation_clips.get(clip_name)
-        if not clip or not clip.get("keyframes"):
+        if not clip or self.active_bone is None:
             return
+
+        tracks = self._clip_tracks(clip)
+        keyframes = tracks.get(self.active_bone.label)
+        if not keyframes:
+            return
+
         timeline_frame = self.anim_timeline_spin.value()
         removed = False
-        for idx in range(len(clip["keyframes"]) - 1, -1, -1):
-            if int(clip["keyframes"][idx].get("timelineFrame", -1)) == timeline_frame:
-                clip["keyframes"].pop(idx)
+        for idx in range(len(keyframes) - 1, -1, -1):
+            if int(keyframes[idx].get("timelineFrame", -1)) == timeline_frame:
+                keyframes.pop(idx)
                 removed = True
                 break
         if not removed:
-            clip["keyframes"].pop()
-        if not clip["keyframes"]:
-            self.animation_clips.pop(clip_name, None)
+            keyframes.pop()
+
+        if not keyframes:
+            tracks.pop(self.active_bone.label, None)
         else:
-            clip["keyframes"].sort(key=lambda item: int(item.get("timelineFrame", 0)))
-            self._renumber_keyframes(clip["keyframes"])
+            keyframes.sort(key=lambda item: int(item.get("timelineFrame", 0)))
+            self._renumber_keyframes(keyframes)
+
+        if not tracks:
+            self.animation_clips.pop(clip_name, None)
+
         preferred_frame = timeline_frame if clip_name in self.animation_clips else None
         self._update_animation_editor_state()
         self._refresh_timeline_clips(preferred_clip=clip_name, preferred_frame=preferred_frame)
@@ -589,33 +722,81 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_timeline_clips()
 
     def _build_clip_poses(self, clip_name):
+        self.playback_track_poses = {}
+        self.playback_timeline_start = 0
         clip = self.animation_clips.get(clip_name)
         if not clip:
             return []
-        keyframes = clip.get("keyframes", [])
-        if not keyframes:
+
+        tracks = self._clip_tracks(clip)
+        timeline_start = None
+        timeline_end = None
+
+        for bone_label, keyframes in tracks.items():
+            if not bone_label or not isinstance(keyframes, list) or not keyframes:
+                continue
+            track_start_raw, track_end_raw = self._keyframes_timeline_bounds(keyframes)
+            if track_start_raw is None or track_end_raw is None:
+                continue
+            try:
+                runtime_clip = animation_lib.build_animation(f"{clip_name}:{bone_label}", keyframes)
+                poses = runtime_clip.to_absolute_poses()
+            except Exception:
+                poses = []
+
+            if not poses:
+                poses = self._interpolate_absolute_poses(keyframes)
+            if not poses:
+                continue
+
+            track_start = int(track_start_raw)
+            track_end = int(track_end_raw)
+            expected_len = track_end - track_start + 1
+            if expected_len > 0 and len(poses) != expected_len:
+                poses = self._interpolate_absolute_poses(keyframes)
+                if len(poses) < expected_len and poses:
+                    poses = poses + [poses[-1]] * (expected_len - len(poses))
+                elif len(poses) > expected_len:
+                    poses = poses[:expected_len]
+            if not poses:
+                continue
+
+            self.playback_track_poses[bone_label] = {
+                "start": track_start,
+                "end": track_end,
+                "poses": poses,
+            }
+
+            if timeline_start is None or track_start < timeline_start:
+                timeline_start = track_start
+            if timeline_end is None or track_end > timeline_end:
+                timeline_end = track_end
+
+        if timeline_start is None or timeline_end is None:
             return []
-        try:
-            runtime_clip = animation_lib.build_animation(clip_name, keyframes)
-            self.playback_timeline_start = int(getattr(runtime_clip, "timeline_start", 0))
-            return runtime_clip.to_absolute_poses()
-        except Exception:
-            return []
+
+        self.playback_timeline_start = int(timeline_start)
+        return [None] * (int(timeline_end) - int(timeline_start) + 1)
 
     def _update_ghost_reference_pose(self, clip_name, current_frame=None):
-        if self.puppet is None or not clip_name:
+        if self.puppet is None or not clip_name or self.active_bone is None:
             self.puppet_item.clear_ghost_pose()
             return
         clip = self.animation_clips.get(clip_name)
         if not clip:
             self.puppet_item.clear_ghost_pose()
             return
-        assigned_bone = str(clip.get("boneLabel") or "").strip()
-        if not assigned_bone:
-            self.puppet_item.clear_ghost_pose()
-            return
-
-        keyframes = clip.get("keyframes", [])
+        active_bone_label = self.active_bone.label
+        tracks = self._clip_tracks(clip)
+        keyframes = tracks.get(active_bone_label, [])
+        target_bone_label = active_bone_label
+        if not keyframes:
+            for bone_label in sorted(tracks.keys()):
+                candidate = tracks.get(bone_label, [])
+                if candidate:
+                    keyframes = candidate
+                    target_bone_label = bone_label
+                    break
         if not keyframes:
             self.puppet_item.clear_ghost_pose()
             return
@@ -651,7 +832,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         self.puppet_item.set_ghost_pose(
-            assigned_bone,
+            target_bone_label,
             {
                 "x": selected_keyframe.get("x", 0.0),
                 "y": selected_keyframe.get("y", 0.0),
@@ -663,18 +844,26 @@ class MainWindow(QtWidgets.QMainWindow):
         clip = self.animation_clips.get(clip_name)
         if not clip:
             return []
-        positions = []
-        for keyframe in clip.get("keyframes", []):
-            try:
-                timeline_frame = int(keyframe.get("timelineFrame", 0))
-            except Exception:
+        positions = set()
+        tracks = self._clip_tracks(clip)
+        for keyframes in tracks.values():
+            if not isinstance(keyframes, list):
                 continue
-            positions.append(timeline_frame - self.playback_timeline_start)
-        return positions
+            for keyframe in keyframes:
+                try:
+                    timeline_frame = int(keyframe.get("timelineFrame", 0))
+                except Exception:
+                    continue
+                positions.add(timeline_frame - self.playback_timeline_start)
+        return sorted(positions)
 
     def _on_timeline_clip_changed(self, index):
         self._stop_playback()
-        clip_name = self.timeline_clip_combo.currentText().strip()
+        previous_clip_name = self.playback_clip_name
+        if index >= 0:
+            clip_name = self.timeline_clip_combo.itemText(index).strip()
+        else:
+            clip_name = self.timeline_clip_combo.currentText().strip()
         self.playback_clip_name = clip_name
         self.playback_timeline_start = 0
 
@@ -687,10 +876,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.anim_existing_clip_combo.setCurrentText(clip_name)
                 self.anim_existing_clip_combo.blockSignals(False)
             self._update_animation_editor_state()
+            if clip_name != previous_clip_name or not self.playback_base_pose:
+                self._capture_playback_base_pose()
+        else:
+            self.playback_base_pose = {}
 
         self.playback_poses = self._build_clip_poses(clip_name) if clip_name else []
 
         if not self.playback_poses:
+            self.playback_track_poses = {}
             self._pending_timeline_frame = None
             self.timeline_slider.setRange(0, 0)
             self.timeline_slider.set_keyframe_positions([])
@@ -764,21 +958,41 @@ class MainWindow(QtWidgets.QMainWindow):
         return None
 
     def _apply_timeline_pose(self, frame_index):
-        if self.puppet is None or not self.playback_poses or not self.playback_clip_name:
+        if self.puppet is None or not self.playback_poses or not self.playback_track_poses:
             return
-        clip = self.animation_clips.get(self.playback_clip_name)
-        if not clip:
-            return
-        assigned_bone = str(clip.get("boneLabel") or "").strip()
-        if not assigned_bone:
-            return
-        bone = self._find_bone_by_label(assigned_bone)
-        if bone is None:
-            return
-        pose = self.playback_poses[max(0, min(frame_index, len(self.playback_poses) - 1))]
-        bone.x = pose["x"]
-        bone.y = pose["y"]
-        bone.angle = pose["angle"]
+
+        local_index = max(0, min(frame_index, len(self.playback_poses) - 1))
+        absolute_frame = self.playback_timeline_start + local_index
+        bones_by_label = {bone.label: bone for bone in self.bones}
+
+        for bone_label, pose in self.playback_base_pose.items():
+            bone = bones_by_label.get(bone_label)
+            if bone is None:
+                continue
+            bone.x = pose.get("x", bone.x)
+            bone.y = pose.get("y", bone.y)
+            bone.angle = pose.get("angle", bone.angle)
+
+        for bone_label, track in self.playback_track_poses.items():
+            poses = track.get("poses", [])
+            if not poses:
+                continue
+            track_start = int(track.get("start", 0))
+            track_index = absolute_frame - track_start
+            if track_index < 0:
+                continue
+            if track_index >= len(poses):
+                # Keep the last pose once track keyframes are exhausted so
+                # shorter tracks do not snap back to the base pose.
+                track_index = len(poses) - 1
+            bone = bones_by_label.get(bone_label)
+            if bone is None:
+                continue
+            pose = poses[track_index]
+            bone.x = pose["x"]
+            bone.y = pose["y"]
+            bone.angle = pose["angle"]
+
         self.puppet.recalculate_world_matrices()
         self.puppet_item.update()
         self._refresh_coords()
@@ -1034,6 +1248,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_item.set_active_bone(self.active_bone)
         self._refresh_coords()
         self._update_animation_editor_state()
+        self._update_ghost_reference_pose(self.playback_clip_name, self.anim_timeline_spin.value())
         self.view.setFocus()
 
     def _toggle_text(self, value):
