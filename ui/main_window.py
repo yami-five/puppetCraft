@@ -1,8 +1,10 @@
 import json
 import os
+import re
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import puppet
 import puppetExporter
 import puppetImporter
 from app_constants import DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH, DEFAULT_SETTINGS
@@ -94,11 +96,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
         file_menu = QtWidgets.QMenu("File", self)
 
+        new_action = file_menu.addAction("New")
+        new_action.triggered.connect(self._new_puppet)
+
         open_action = file_menu.addAction("Open")
         open_action.triggered.connect(self._open_puppet)
 
         save_action = file_menu.addAction("Save")
         save_action.triggered.connect(self._save)
+
+        save_as_action = file_menu.addAction("Save As")
+        save_as_action.triggered.connect(self._save_as)
+
+        save_settings_action = file_menu.addAction("Save Settings")
+        save_settings_action.triggered.connect(self._save_settings)
+
+        export_action = file_menu.addAction("Export")
+        export_action.triggered.connect(self._export)
 
         view_menu = QtWidgets.QMenu("View", self)
 
@@ -144,8 +158,10 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar.addWidget(tools_button)
 
     def _setup_shortcuts(self):
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+N"), self, activated=self._new_puppet)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+O"), self, activated=self._open_puppet)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+S"), self, activated=self._save)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Shift+S"), self, activated=self._save_as)
         QtGui.QShortcut(QtGui.QKeySequence("PageUp"), self, activated=self.view.zoom_in)
         QtGui.QShortcut(QtGui.QKeySequence("PageDown"), self, activated=self.view.zoom_out)
         QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Plus), self, activated=self.view.zoom_in)
@@ -204,6 +220,83 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_item.set_active_bone(self.active_bone)
         self._populate_bone_list()
         self._refresh_coords()
+        self._update_window_title()
+        self.view.setFocus()
+
+    def _confirm_save_current_file(self):
+        if not self.puppet_file_path:
+            return True
+
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "New Puppet",
+            "Save current puppet before creating a new one?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Cancel,
+            QtWidgets.QMessageBox.Yes,
+        )
+        if answer == QtWidgets.QMessageBox.Cancel:
+            return False
+        if answer == QtWidgets.QMessageBox.Yes:
+            return self._save()
+        return True
+
+    def _normalize_new_puppet_name(self, raw_name):
+        cleaned = re.sub(r'[<>:"/\\\\|?*]', "_", raw_name.strip())
+        cleaned = re.sub(r"\s+", "", cleaned)
+        return cleaned
+
+    def _new_puppet(self):
+        if not self._confirm_save_current_file():
+            return
+
+        default_name = "newPuppet"
+        name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "New Puppet",
+            "Puppet name:",
+            QtWidgets.QLineEdit.Normal,
+            default_name,
+        )
+        if not ok:
+            return
+
+        normalized_name = self._normalize_new_puppet_name(name)
+        if not normalized_name:
+            QtWidgets.QMessageBox.warning(self, "New Puppet", "Puppet name cannot be empty.")
+            return
+
+        root_label = normalized_name if normalized_name.endswith("Root") else f"{normalized_name}Root"
+        file_stem = root_label[:-4] if root_label.endswith("Root") else root_label
+        if not file_stem:
+            QtWidgets.QMessageBox.warning(self, "New Puppet", "Invalid puppet name.")
+            return
+
+        puppet_json = {
+            "label": root_label,
+            "x": self.canvas_width // 2,
+            "y": self.canvas_height // 2,
+            "angle": 0.0,
+            "bones": [],
+        }
+        self.puppet = puppet.Puppet(puppet_json, [])
+        self.bones = self._collect_bones(self.puppet)
+        self.active_bone = self.puppet
+
+        self.canvas_pan_x = 0.0
+        self.canvas_pan_y = 0.0
+
+        self.puppet_file_path = os.path.abspath(f"{file_stem}.json")
+        self.puppet_file_base = os.path.splitext(self.puppet_file_path)[0]
+        self.settings["lastPuppetFile"] = self.puppet_file_path
+
+        os.makedirs(f"sprites_{file_stem}", exist_ok=True)
+
+        self.puppet_item.puppet = self.puppet
+        self.puppet_item._sprite_cache.clear()
+        self.puppet_item.set_active_bone(self.active_bone)
+        self._populate_bone_list()
+        self._refresh_coords()
+        self._layout_scene()
         self._update_window_title()
         self.view.setFocus()
 
@@ -298,8 +391,51 @@ class MainWindow(QtWidgets.QMainWindow):
     def _save(self):
         if self.puppet is None or not self.puppet_file_base:
             QtWidgets.QMessageBox.information(self, "Save Puppet", "Open a puppet file first.")
+            return False
+        try:
+            puppetExporter.save_puppet(self.puppet, self.puppet_file_base)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Save Puppet", f"Failed to save file:\n{exc}")
+            return False
+        return True
+
+    def _save_as(self):
+        if self.puppet is None:
+            QtWidgets.QMessageBox.information(self, "Save As", "Open a puppet file first.")
             return
-        puppetExporter.save_to_file(self.puppet, self.settings, self.puppet_file_base)
+
+        if self.puppet_file_path:
+            start_path = self.puppet_file_path
+        else:
+            last_path = self.settings.get("lastPuppetFile", "")
+            start_path = last_path if last_path else "puppet.json"
+
+        selected_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Puppet As",
+            start_path,
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not selected_path:
+            return
+
+        if not selected_path.lower().endswith(".json"):
+            selected_path = f"{selected_path}.json"
+
+        self.puppet_file_path = selected_path
+        self.puppet_file_base = os.path.splitext(selected_path)[0]
+        self.settings["lastPuppetFile"] = selected_path
+        self._update_window_title()
+        puppetExporter.save_puppet(self.puppet, self.puppet_file_base)
+
+    def _save_settings(self):
+        puppetExporter.save_settings(self.settings)
+
+    def _export(self):
+        if self.puppet is None or not self.puppet_file_base:
+            QtWidgets.QMessageBox.information(self, "Export", "Open a puppet file first.")
+            return
+        puppetExporter.export_cpuppet(self.puppet, self.puppet_file_base)
 
     def keyPressEvent(self, event):
         key = event.key()
