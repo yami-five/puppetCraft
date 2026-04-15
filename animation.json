@@ -1,0 +1,75 @@
+{
+    "animations": [
+        {
+            "animationName": "jawAnimation",
+            "keyframes": [
+                {
+                    "x": 120,
+                    "y": 172,
+                    "angle": 0.0,
+                    "label": "frame1",
+                    "timelineFrame": 0
+                },
+                {
+                    "x": 115,
+                    "y": 174,
+                    "angle": 0.4,
+                    "label": "frame2",
+                    "timelineFrame": 5
+                },
+                {
+                    "x": 120,
+                    "y": 172,
+                    "angle": 0.0,
+                    "label": "frame3",
+                    "timelineFrame": 10
+                }
+            ]
+        },
+        {
+            "animationName": "raisingArmParent",
+            "keyframes": [
+                {
+                    "x": 144,
+                    "y": 189,
+                    "angle": 1.14,
+                    "label": "frame1",
+                    "timelineFrame": 0
+                },
+                {
+                    "x": 144,
+                    "y": 189,
+                    "angle": 0.0,
+                    "label": "frame2",
+                    "timelineFrame": 15
+                }
+            ]
+        },
+        {
+            "animationName": "waving",
+            "keyframes": [
+                {
+                    "x": 144,
+                    "y": 189,
+                    "angle": -2.0,
+                    "label": "frame1",
+                    "timelineFrame": 0
+                },
+                {
+                    "x": 144,
+                    "y": 189,
+                    "angle": -1.0,
+                    "label": "frame2",
+                    "timelineFrame": 10
+                },
+                {
+                    "x": 144,
+                    "y": 189,
+                    "angle": -2.0,
+                    "label": "frame3",
+                    "timelineFrame": 20
+                }
+            ]
+        }
+    ]
+}

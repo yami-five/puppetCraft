@@ -1,6 +1,71 @@
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
+class KeyframeTimelineSlider(QtWidgets.QSlider):
+    def __init__(self, orientation=QtCore.Qt.Horizontal, parent=None):
+        super().__init__(orientation, parent)
+        self._keyframe_positions = []
+        self._marker_color = QtGui.QColor(255, 196, 64)
+        self._active_marker_color = QtGui.QColor(255, 255, 255)
+        self.valueChanged.connect(self._on_slider_value_changed)
+
+    def _on_slider_value_changed(self, _value):
+        self.update()
+
+    def set_keyframe_positions(self, positions):
+        cleaned = []
+        for pos in positions:
+            try:
+                cleaned.append(int(pos))
+            except Exception:
+                continue
+        unique_sorted = sorted(set(cleaned))
+        if unique_sorted == self._keyframe_positions:
+            return
+        self._keyframe_positions = unique_sorted
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._keyframe_positions:
+            return
+
+        option = QtWidgets.QStyleOptionSlider()
+        self.initStyleOption(option)
+        groove = self.style().subControlRect(
+            QtWidgets.QStyle.CC_Slider,
+            option,
+            QtWidgets.QStyle.SC_SliderGroove,
+            self,
+        )
+        if groove.width() <= 0:
+            return
+
+        minimum = self.minimum()
+        maximum = self.maximum()
+        span = maximum - minimum
+        marker_top = max(0, groove.top() - 5)
+        marker_bottom = min(self.height() - 1, groove.bottom() + 5)
+        usable_width = max(1, groove.width() - 1)
+        current = self.value()
+
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, False)
+
+        for marker in self._keyframe_positions:
+            if marker < minimum or marker > maximum:
+                continue
+            if span <= 0:
+                x = groove.left() + groove.width() // 2
+            else:
+                ratio = (marker - minimum) / span
+                x = groove.left() + int(round(ratio * usable_width))
+            color = self._active_marker_color if marker == current else self._marker_color
+            width = 2 if marker == current else 1
+            painter.setPen(QtGui.QPen(color, width))
+            painter.drawLine(x, marker_top, x, marker_bottom)
+
+
 class PuppetView(QtWidgets.QGraphicsView):
     layoutChanged = QtCore.Signal()
     moveRequested = QtCore.Signal(int, int)

@@ -1,8 +1,8 @@
 {
     "spritesPath": "sprites_mascot",
     "label": "mascotRoot",
-    "x": 160,
-    "y": 250,
+    "x": 120.0,
+    "y": 250.0,
     "angle": 0.0,
     "bones": [
         {
@@ -32,9 +32,9 @@
                             "childBonesLayer2": [
                                 {
                                     "label": "mascotSkullJawParent",
-                                    "x": 0,
-                                    "y": 47,
-                                    "angle": 0.1,
+                                    "x": 1.0,
+                                    "y": 47.0,
+                                    "angle": 0.0,
                                     "spriteIndex": -1,
                                     "baseSpriteRotation": 0.0,
                                     "childBonesLayer1": [
@@ -133,8 +133,8 @@
             "childBonesLayer2": [
                 {
                     "label": "mascotArmParent",
-                    "x": 24,
-                    "y": 79,
+                    "x": 22.0,
+                    "y": 78.0,
                     "angle": 1.14,
                     "spriteIndex": -1,
                     "baseSpriteRotation": 0.0,
@@ -195,6 +195,81 @@
                             ]
                         }
                     ]
+                }
+            ]
+        }
+    ],
+    "animations": [
+        {
+            "animationName": "jawAnimation",
+            "keyframes": [
+                {
+                    "x": 1.0,
+                    "y": 47.0,
+                    "angle": 0.0,
+                    "label": "frame1",
+                    "timelineFrame": 0
+                },
+                {
+                    "x": -4.0,
+                    "y": 48.0,
+                    "angle": 0.4,
+                    "label": "frame2",
+                    "timelineFrame": 5
+                },
+                {
+                    "x": 1.0,
+                    "y": 47.0,
+                    "angle": -2.7755575615628914e-17,
+                    "label": "frame3",
+                    "timelineFrame": 10
+                }
+            ],
+            "boneLabel": "mascotSkullJawParent"
+        },
+        {
+            "animationName": "raisingArmParent",
+            "keyframes": [
+                {
+                    "x": 22.0,
+                    "y": 78.0,
+                    "angle": 1.14,
+                    "label": "frame1",
+                    "timelineFrame": 0
+                },
+                {
+                    "x": 23.0,
+                    "y": 79.0,
+                    "angle": 8.326672684688674e-17,
+                    "label": "frame2",
+                    "timelineFrame": 15
+                }
+            ],
+            "boneLabel": "mascotArmParent"
+        },
+        {
+            "animationName": "waving",
+            "keyframes": [
+                {
+                    "x": 144.0,
+                    "y": 189.0,
+                    "angle": -2.0,
+                    "label": "frame1",
+                    "timelineFrame": 0
+                },
+                {
+                    "x": 144.0,
+                    "y": 189.0,
+                    "angle": -1.0,
+                    "label": "frame2",
+                    "timelineFrame": 10
+                },
+                {
+                    "x": 144.0,
+                    "y": 189.0,
+                    "angle": -2.0,
+                    "label": "frame3",
+                    "timelineFrame": 20
                 }
             ]
         }

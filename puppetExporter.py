@@ -13,7 +13,7 @@ def add_bonesC(bones,results):
         add_bonesC(bone.childBonesLayer1,results)
         add_bonesC(bone.childBonesLayer2,results)
 
-def save_puppet(puppet, filename_base):
+def save_puppet(puppet, filename_base, animations=None):
     puppet_path = f"{filename_base}.json"
     backup_path = f"{filename_base}_backup.json"
 
@@ -25,6 +25,8 @@ def save_puppet(puppet, filename_base):
     with open(puppet_path, "w") as f:
         data = puppet.get_puppet_dict()
         data["bones"]=add_bones(puppet.bones)
+        if animations is not None:
+            data["animations"] = animations
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
