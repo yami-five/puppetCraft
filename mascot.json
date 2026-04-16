@@ -309,18 +309,6 @@
                             "timelineFrame": 20
                         }
                     ]
-                },
-                {
-                    "boneLabel": "mascotRoot",
-                    "keyframes": [
-                        {
-                            "x": 120.0,
-                            "y": 250.0,
-                            "angle": 0.0,
-                            "label": "frame1",
-                            "timelineFrame": 20
-                        }
-                    ]
                 }
             ]
         },

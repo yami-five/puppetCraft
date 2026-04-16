@@ -145,7 +145,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.anim_timeline_spin = QtWidgets.QSpinBox()
         self.anim_timeline_spin.setRange(0, 100000)
         self.anim_timeline_spin.setValue(0)
-        self.anim_timeline_spin.valueChanged.connect(self._update_animation_editor_state)
+        self.anim_timeline_spin.valueChanged.connect(self._on_animation_timeline_spin_changed)
         timeline_row.addWidget(self.anim_timeline_spin)
         layout.addLayout(timeline_row)
 
@@ -605,6 +605,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.anim_assign_bone_button.setEnabled(self.active_bone is not None)
             self.anim_rename_clip_button.setEnabled(False)
 
+    def _on_animation_timeline_spin_changed(self, value):
+        self._update_animation_editor_state()
+        frame_value = int(value)
+        if self.playback_poses and self.playback_clip_name:
+            target_index = frame_value - int(self.playback_timeline_start)
+            target_index = max(0, min(len(self.playback_poses) - 1, target_index))
+            if self.timeline_slider.value() != target_index:
+                self.timeline_slider.setValue(target_index)
+                return
+            self._apply_timeline_pose(target_index)
+        self._update_ghost_reference_pose(self.playback_clip_name, frame_value)
+
     def _refresh_timeline_clips(self, preferred_clip=None, preferred_frame=None):
         self._pending_timeline_frame = preferred_frame
         current = preferred_clip if preferred_clip is not None else self.timeline_clip_combo.currentText()
@@ -789,17 +801,6 @@ class MainWindow(QtWidgets.QMainWindow):
         active_bone_label = self.active_bone.label
         tracks = self._clip_tracks(clip)
         keyframes = tracks.get(active_bone_label, [])
-        target_bone_label = active_bone_label
-        if not keyframes:
-            for bone_label in sorted(tracks.keys()):
-                candidate = tracks.get(bone_label, [])
-                if candidate:
-                    keyframes = candidate
-                    target_bone_label = bone_label
-                    break
-        if not keyframes:
-            self.puppet_item.clear_ghost_pose()
-            return
 
         if current_frame is None:
             try:
@@ -807,38 +808,68 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 current_frame = 0
 
-        selected_keyframe = None
-        selected_frame = None
-        earliest_keyframe = None
-        earliest_frame = None
-        for keyframe in keyframes:
-            try:
-                timeline_frame = int(keyframe.get("timelineFrame", 0))
-            except Exception:
-                continue
+        candidate_frames = []
+        has_active_track_sequence = isinstance(keyframes, list) and len(keyframes) >= 2
+        if has_active_track_sequence:
+            for keyframe in keyframes:
+                try:
+                    candidate_frames.append(int(keyframe.get("timelineFrame", 0)))
+                except Exception:
+                    continue
+        else:
+            candidate_frames = self._clip_timeline_values(clip)
 
-            if earliest_frame is None or timeline_frame < earliest_frame:
-                earliest_keyframe = keyframe
-                earliest_frame = timeline_frame
-
-            if timeline_frame <= current_frame and (selected_frame is None or timeline_frame > selected_frame):
-                selected_keyframe = keyframe
-                selected_frame = timeline_frame
-
-        if selected_keyframe is None:
-            selected_keyframe = earliest_keyframe
-        if selected_keyframe is None:
+        if not candidate_frames:
             self.puppet_item.clear_ghost_pose()
             return
 
-        self.puppet_item.set_ghost_pose(
-            target_bone_label,
-            {
-                "x": selected_keyframe.get("x", 0.0),
-                "y": selected_keyframe.get("y", 0.0),
-                "angle": selected_keyframe.get("angle", 0.0),
-            },
-        )
+        previous_frames = [frame for frame in candidate_frames if frame <= current_frame]
+        if previous_frames:
+            reference_frame = int(max(previous_frames))
+        else:
+            reference_frame = int(min(candidate_frames))
+
+        saved_local_pose = [
+            (bone, float(bone.x), float(bone.y), float(bone.angle))
+            for bone in self.bones
+        ]
+        playback_state_backup = None
+        used_temp_playback = False
+
+        try:
+            if self.playback_clip_name == clip_name and self.playback_track_poses:
+                reference_index = int(reference_frame) - int(self.playback_timeline_start)
+                if not self._set_timeline_pose(reference_index):
+                    self.puppet_item.clear_ghost_pose()
+                    return
+            else:
+                playback_state_backup = {
+                    "track_poses": self.playback_track_poses,
+                    "timeline_start": self.playback_timeline_start,
+                    "poses": self.playback_poses,
+                }
+                temp_poses = self._build_clip_poses(clip_name)
+                used_temp_playback = True
+                if not temp_poses or not self.playback_track_poses:
+                    self.puppet_item.clear_ghost_pose()
+                    return
+                reference_index = int(reference_frame) - int(self.playback_timeline_start)
+                if not self._set_timeline_pose(reference_index):
+                    self.puppet_item.clear_ghost_pose()
+                    return
+
+            self.puppet_item.capture_ghost_from_current_pose()
+        finally:
+            for bone, x, y, angle in saved_local_pose:
+                bone.x = x
+                bone.y = y
+                bone.angle = angle
+            self.puppet.recalculate_world_matrices()
+
+            if used_temp_playback and playback_state_backup is not None:
+                self.playback_track_poses = playback_state_backup["track_poses"]
+                self.playback_timeline_start = playback_state_backup["timeline_start"]
+                self.playback_poses = playback_state_backup["poses"]
 
     def _timeline_keyframe_positions(self, clip_name):
         clip = self.animation_clips.get(clip_name)
@@ -957,9 +988,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 return bone
         return None
 
-    def _apply_timeline_pose(self, frame_index):
+    def _set_timeline_pose(self, frame_index):
         if self.puppet is None or not self.playback_poses or not self.playback_track_poses:
-            return
+            return False
 
         local_index = max(0, min(frame_index, len(self.playback_poses) - 1))
         absolute_frame = self.playback_timeline_start + local_index
@@ -994,6 +1025,11 @@ class MainWindow(QtWidgets.QMainWindow):
             bone.angle = pose["angle"]
 
         self.puppet.recalculate_world_matrices()
+        return True
+
+    def _apply_timeline_pose(self, frame_index):
+        if not self._set_timeline_pose(frame_index):
+            return
         self.puppet_item.update()
         self._refresh_coords()
 

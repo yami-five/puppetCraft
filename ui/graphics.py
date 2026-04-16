@@ -21,6 +21,7 @@ class PuppetItem(QtWidgets.QGraphicsItem):
         self._font = QtGui.QFont("Arial", 8)
         self._draw_offset = QtCore.QPointF(0.0, 0.0)
         self._ghost_pose = None
+        self._ghost_sprite_positions = {}
         self._ghost_opacity = 0.5
 
     def boundingRect(self):
@@ -30,7 +31,7 @@ class PuppetItem(QtWidgets.QGraphicsItem):
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         if self.settings.get("isGhostVisible", True):
-            ghost_sprite_positions = self._build_ghost_sprite_positions()
+            ghost_sprite_positions = self._ghost_sprite_positions
         else:
             ghost_sprite_positions = {}
         painter.save()
@@ -67,13 +68,34 @@ class PuppetItem(QtWidgets.QGraphicsItem):
             "y": y,
             "angle": angle,
         }
+        self._ghost_sprite_positions = self._build_ghost_sprite_positions()
         self.update()
 
     def clear_ghost_pose(self):
-        if self._ghost_pose is None:
+        if self._ghost_pose is None and not self._ghost_sprite_positions:
             return
         self._ghost_pose = None
+        self._ghost_sprite_positions = {}
         self.update()
+
+    def capture_ghost_from_current_pose(self):
+        if self.puppet is None:
+            self.clear_ghost_pose()
+            return False
+
+        positions = {}
+        for root_bone in self.puppet.bones:
+            self._collect_ghost_sprite_positions(
+                root_bone,
+                self.puppet.worldMatrix[0][2],
+                self.puppet.worldMatrix[1][2],
+                positions,
+            )
+
+        self._ghost_pose = None
+        self._ghost_sprite_positions = positions
+        self.update()
+        return True
 
     def _find_bone_by_label(self, label):
         if self.puppet is None:
