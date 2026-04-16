@@ -1,4 +1,6 @@
 {
     "isTextVisible": false,
-    "isBoneVisible": false
+    "isBoneVisible": true,
+    "isGhostVisible": true,
+    "lastPuppetFile": "C:\\Repos\\puppetCraft\\newPuppet.json"
 }

@@ -232,7 +232,7 @@ class PuppetItem(QtWidgets.QGraphicsItem):
 
         if self.settings.get("isTextVisible", True):
             painter.setFont(self._font)
-            painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0)))
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255)))
             painter.drawText(
                 QtCore.QPointF(bone.worldMatrix[0][2] + 5, bone.worldMatrix[1][2]),
                 bone.label,
@@ -253,7 +253,7 @@ class PuppetItem(QtWidgets.QGraphicsItem):
 
         if self.settings.get("isTextVisible", True):
             painter.setFont(self._font)
-            painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0)))
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255)))
             painter.drawText(
                 QtCore.QPointF(self.puppet.worldMatrix[0][2] + 5, self.puppet.worldMatrix[1][2]),
                 self.puppet.label,

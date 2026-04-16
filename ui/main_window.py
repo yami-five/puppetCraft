@@ -1,6 +1,8 @@
 import json
 import os
 import re
+import shutil
+import math
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -8,6 +10,7 @@ import animation as animation_lib
 import puppet
 import puppetExporter
 import puppetImporter
+import spritesLoader
 from app_constants import DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH, DEFAULT_SETTINGS
 from ui.graphics import PuppetItem, PuppetScene
 from ui.view import KeyframeTimelineSlider, PuppetView
@@ -22,6 +25,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_file_base = ""
         self.bones = []
         self.active_bone = None
+        self.sprites = []
+        self.sprite_paths = []
+        self.sprites_path = ""
         self.canvas_width, self.canvas_height = DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT
         self.canvas_pan_x = 0.0
         self.canvas_pan_y = 0.0
@@ -80,6 +86,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.playback_timer.timeout.connect(self._on_playback_tick)
 
         self.animation_editor = self._create_animation_editor()
+        self.edit_tools = self._create_edit_tools()
         self.play_timeline_bar = self._create_play_timeline_bar()
 
         self._setup_toolbar()
@@ -90,6 +97,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_layout.addWidget(self.bone_list)
         right_layout.addWidget(self.coords_label)
         right_layout.addWidget(self.mode_combo)
+        right_layout.addWidget(self.edit_tools)
         right_layout.addWidget(self.animation_editor)
         right_layout.addStretch(1)
 
@@ -115,7 +123,55 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_window_title()
         self._refresh_timeline_clips()
         self._update_animation_editor_state()
+        self._update_edit_tools_state()
         self._on_mode_changed(self.mode_combo.currentIndex())
+
+    def _create_edit_tools(self):
+        group = QtWidgets.QGroupBox("Edit")
+        layout = QtWidgets.QVBoxLayout(group)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self.edit_add_bone_button = QtWidgets.QPushButton("Add Bone")
+        self.edit_add_bone_button.clicked.connect(self._add_bone)
+        layout.addWidget(self.edit_add_bone_button)
+
+        self.edit_reparent_bone_button = QtWidgets.QPushButton("Set Parent")
+        self.edit_reparent_bone_button.clicked.connect(self._set_bone_parent)
+        layout.addWidget(self.edit_reparent_bone_button)
+
+        self.edit_sprite_button = QtWidgets.QPushButton("Sprite")
+        self.edit_sprite_button.clicked.connect(self._set_active_bone_sprite)
+        layout.addWidget(self.edit_sprite_button)
+
+        sprite_rot_row = QtWidgets.QHBoxLayout()
+        sprite_rot_row.addWidget(QtWidgets.QLabel("Sprite Rot"))
+        self.edit_sprite_rot_left_button = QtWidgets.QPushButton("-90")
+        self.edit_sprite_rot_left_button.clicked.connect(lambda: self._rotate_active_sprite_base(-90))
+        sprite_rot_row.addWidget(self.edit_sprite_rot_left_button)
+        self.edit_sprite_rot_flip_button = QtWidgets.QPushButton("180")
+        self.edit_sprite_rot_flip_button.clicked.connect(lambda: self._rotate_active_sprite_base(180))
+        sprite_rot_row.addWidget(self.edit_sprite_rot_flip_button)
+        self.edit_sprite_rot_right_button = QtWidgets.QPushButton("+90")
+        self.edit_sprite_rot_right_button.clicked.connect(lambda: self._rotate_active_sprite_base(90))
+        sprite_rot_row.addWidget(self.edit_sprite_rot_right_button)
+        layout.addLayout(sprite_rot_row)
+
+        layer_row = QtWidgets.QHBoxLayout()
+        layer_row.addWidget(QtWidgets.QLabel("Layer"))
+        self.edit_layer_combo = QtWidgets.QComboBox()
+        self.edit_layer_combo.addItems(["Above Parent", "Below Parent"])
+        layer_row.addWidget(self.edit_layer_combo, 1)
+        self.edit_apply_layer_button = QtWidgets.QPushButton("Apply")
+        self.edit_apply_layer_button.clicked.connect(self._apply_active_bone_layer)
+        layer_row.addWidget(self.edit_apply_layer_button)
+        layout.addLayout(layer_row)
+
+        self.edit_delete_bone_button = QtWidgets.QPushButton("Delete Bone")
+        self.edit_delete_bone_button.clicked.connect(self._delete_active_bone)
+        layout.addWidget(self.edit_delete_bone_button)
+
+        return group
 
     def _create_animation_editor(self):
         group = QtWidgets.QGroupBox("Animation")
@@ -218,13 +274,409 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_mode_changed(self, index):
         mode = self.mode_combo.itemText(index)
         is_animation_mode = mode == "Animation Mode"
+        is_edit_mode = mode == "Edit Mode"
         self.animation_editor.setVisible(is_animation_mode)
         self.play_timeline_bar.setVisible(is_animation_mode)
+        self.edit_tools.setVisible(is_edit_mode)
         if is_animation_mode:
             self._refresh_timeline_clips()
         else:
             self._stop_playback()
+        self._update_edit_tools_state()
         self._layout_scene()
+
+    def _is_edit_mode(self):
+        return self.mode_combo.currentText() == "Edit Mode"
+
+    def _active_is_root(self):
+        return self.active_bone is None or self.active_bone is self.puppet
+
+    def _current_sprites_dir(self):
+        if self.sprites_path:
+            return os.path.abspath(self.sprites_path)
+        if self.puppet is None:
+            return ""
+        return os.path.abspath(f"sprites_{self.puppet.label.replace('Root', '')}")
+
+    def _normalize_fs_path(self, value):
+        return os.path.normcase(os.path.normpath(os.path.abspath(str(value))))
+
+    def _child_layers(self, parent):
+        if parent is None:
+            return []
+        if parent is self.puppet:
+            return [("bones", parent.bones)]
+        return [("childBonesLayer1", parent.childBonesLayer1), ("childBonesLayer2", parent.childBonesLayer2)]
+
+    def _find_parent_entry(self, target_bone):
+        if self.puppet is None or target_bone is None or target_bone is self.puppet:
+            return None, None, None
+
+        queue = [self.puppet]
+        while queue:
+            parent = queue.pop(0)
+            for layer_name, children in self._child_layers(parent):
+                for idx, child in enumerate(children):
+                    if child is target_bone:
+                        return parent, layer_name, idx
+                    queue.append(child)
+        return None, None, None
+
+    def _collect_descendants(self, root_bone):
+        descendants = set()
+        if root_bone is None or root_bone is self.puppet:
+            return descendants
+
+        stack = list(root_bone.childBonesLayer1) + list(root_bone.childBonesLayer2)
+        while stack:
+            bone = stack.pop()
+            descendants.add(bone)
+            stack.extend(bone.childBonesLayer1)
+            stack.extend(bone.childBonesLayer2)
+        return descendants
+
+    def _remove_bone_from_current_parent(self, bone):
+        parent, layer_name, idx = self._find_parent_entry(bone)
+        if parent is None or layer_name is None or idx is None:
+            return None
+        if layer_name == "bones":
+            parent.bones.pop(idx)
+        elif layer_name == "childBonesLayer1":
+            parent.childBonesLayer1.pop(idx)
+        else:
+            parent.childBonesLayer2.pop(idx)
+        return parent
+
+    def _append_bone_to_parent(self, bone, parent, layer_name="childBonesLayer1"):
+        if parent is self.puppet or layer_name == "bones":
+            parent.bones.append(bone)
+            return
+        if layer_name == "childBonesLayer2":
+            parent.childBonesLayer2.append(bone)
+        else:
+            parent.childBonesLayer1.append(bone)
+
+    def _set_active_bone_and_refresh(self, preferred_bone=None):
+        self.bones = self._collect_bones(self.puppet) if self.puppet is not None else []
+        selected = preferred_bone if preferred_bone in self.bones else (self.puppet if self.puppet in self.bones else None)
+        self._populate_bone_list(selected)
+        if self.puppet is None:
+            return
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self._update_animation_editor_state()
+        self._update_edit_tools_state()
+        self._update_ghost_reference_pose(self.playback_clip_name, self.anim_timeline_spin.value())
+
+    def _is_bone_label_taken(self, label, exclude_bone=None):
+        value = str(label).strip()
+        if not value:
+            return True
+        for bone in self.bones:
+            if bone is exclude_bone:
+                continue
+            if bone.label == value:
+                return True
+        return False
+
+    def _remove_animation_tracks_for_bones(self, removed_labels):
+        if not removed_labels:
+            return
+        for clip_name in list(self.animation_clips.keys()):
+            clip = self.animation_clips.get(clip_name)
+            tracks = self._clip_tracks(clip)
+            for label in list(tracks.keys()):
+                if label in removed_labels:
+                    tracks.pop(label, None)
+            if not tracks:
+                self.animation_clips.pop(clip_name, None)
+
+    def _update_edit_tools_state(self):
+        if not hasattr(self, "edit_add_bone_button"):
+            return
+
+        has_puppet = self.puppet is not None
+        has_active = self.active_bone is not None
+        active_is_root = has_puppet and self.active_bone is self.puppet
+        has_sprite = has_active and int(getattr(self.active_bone, "spriteIndex", -1)) >= 0
+        parent, layer_name, _ = self._find_parent_entry(self.active_bone)
+        can_change_layer = has_active and not active_is_root and parent is not None and parent is not self.puppet
+
+        self.edit_add_bone_button.setEnabled(has_puppet and has_active and self._is_edit_mode())
+        self.edit_reparent_bone_button.setEnabled(has_puppet and has_active and not active_is_root and self._is_edit_mode())
+        self.edit_sprite_button.setEnabled(has_puppet and has_active and not active_is_root and self._is_edit_mode())
+        self.edit_sprite_rot_left_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
+        self.edit_sprite_rot_flip_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
+        self.edit_sprite_rot_right_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
+        self.edit_delete_bone_button.setEnabled(has_puppet and has_active and not active_is_root and self._is_edit_mode())
+        self.edit_layer_combo.setEnabled(can_change_layer and self._is_edit_mode())
+        self.edit_apply_layer_button.setEnabled(can_change_layer and self._is_edit_mode())
+
+        if can_change_layer:
+            if layer_name == "childBonesLayer2":
+                self.edit_layer_combo.setCurrentText("Below Parent")
+            else:
+                self.edit_layer_combo.setCurrentText("Above Parent")
+
+    def _add_bone(self):
+        if self.puppet is None or self.active_bone is None:
+            return
+
+        raw_name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Add Bone",
+            "Bone name:",
+            QtWidgets.QLineEdit.Normal,
+            "newBone",
+        )
+        if not ok:
+            return
+        bone_name = str(raw_name).strip()
+        if not bone_name:
+            QtWidgets.QMessageBox.warning(self, "Add Bone", "Bone name cannot be empty.")
+            return
+        if self._is_bone_label_taken(bone_name):
+            QtWidgets.QMessageBox.warning(self, "Add Bone", "Bone name must be unique.")
+            return
+
+        parent = self.active_bone
+        self.puppet.recalculate_world_matrices()
+        parent_world = self.puppet.worldMatrix if parent is self.puppet else parent.worldMatrix
+
+        bone_json = {
+            "label": bone_name,
+            "x": 0.0,
+            "y": 0.0,
+            "angle": 0.0,
+            "spriteIndex": -1,
+            "baseSpriteRotation": 0.0,
+            "childBonesLayer1": [],
+            "childBonesLayer2": [],
+        }
+        new_bone = puppet.Bone(bone_json, self.sprites, parent_world)
+        self._append_bone_to_parent(new_bone, parent, "childBonesLayer1")
+        self._set_active_bone_and_refresh(new_bone)
+        self.view.setFocus()
+
+    def _set_bone_parent(self):
+        if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
+            return
+
+        descendants = self._collect_descendants(self.active_bone)
+        candidates = [bone for bone in self.bones if bone not in descendants and bone is not self.active_bone]
+        if not candidates:
+            QtWidgets.QMessageBox.information(self, "Set Parent", "No valid parent candidates.")
+            return
+
+        candidate_labels = [bone.label for bone in candidates]
+        selected_label, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Set Parent",
+            "Choose new parent:",
+            candidate_labels,
+            0,
+            False,
+        )
+        if not ok:
+            return
+
+        new_parent = next((bone for bone in candidates if bone.label == selected_label), None)
+        if new_parent is None:
+            return
+
+        selected_layer = "Above Parent"
+        if new_parent is not self.puppet:
+            layer_options = ["Above Parent", "Below Parent"]
+            selected_layer, ok = QtWidgets.QInputDialog.getItem(
+                self,
+                "Set Parent",
+                "Draw layer:",
+                layer_options,
+                0,
+                False,
+            )
+            if not ok:
+                return
+
+        self.puppet.recalculate_world_matrices()
+        world_x = float(self.active_bone.worldMatrix[0][2])
+        world_y = float(self.active_bone.worldMatrix[1][2])
+        world_angle = math.atan2(float(self.active_bone.worldMatrix[1][0]), float(self.active_bone.worldMatrix[0][0]))
+
+        self._remove_bone_from_current_parent(self.active_bone)
+        target_layer = "childBonesLayer1" if selected_layer == "Above Parent" else "childBonesLayer2"
+        self._append_bone_to_parent(self.active_bone, new_parent, target_layer)
+
+        parent_matrix = self.puppet.worldMatrix if new_parent is self.puppet else new_parent.worldMatrix
+        parent_x = float(parent_matrix[0][2])
+        parent_y = float(parent_matrix[1][2])
+        parent_angle = math.atan2(float(parent_matrix[1][0]), float(parent_matrix[0][0]))
+        cos_parent = math.cos(parent_angle)
+        sin_parent = math.sin(parent_angle)
+
+        dx = world_x - parent_x
+        dy = world_y - parent_y
+        self.active_bone.x = cos_parent * dx + sin_parent * dy
+        self.active_bone.y = -sin_parent * dx + cos_parent * dy
+        self.active_bone.angle = world_angle - parent_angle
+
+        self._set_active_bone_and_refresh(self.active_bone)
+        self.view.setFocus()
+
+    def _apply_active_bone_layer(self):
+        if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
+            return
+
+        parent, layer_name, _ = self._find_parent_entry(self.active_bone)
+        if parent is None or parent is self.puppet:
+            return
+
+        target_layer = "childBonesLayer1" if self.edit_layer_combo.currentText() == "Above Parent" else "childBonesLayer2"
+        if layer_name == target_layer:
+            return
+
+        self._remove_bone_from_current_parent(self.active_bone)
+        self._append_bone_to_parent(self.active_bone, parent, target_layer)
+        self._set_active_bone_and_refresh(self.active_bone)
+        self.view.setFocus()
+
+    def _delete_active_bone(self):
+        if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
+            return
+
+        subtree = [self.active_bone]
+        stack = list(self.active_bone.childBonesLayer1) + list(self.active_bone.childBonesLayer2)
+        while stack:
+            bone = stack.pop()
+            subtree.append(bone)
+            stack.extend(bone.childBonesLayer1)
+            stack.extend(bone.childBonesLayer2)
+        removed_labels = {bone.label for bone in subtree}
+
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Bone",
+            f"Delete bone '{self.active_bone.label}' and {len(subtree) - 1} child bones?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+
+        parent = self._remove_bone_from_current_parent(self.active_bone)
+        self._remove_animation_tracks_for_bones(removed_labels)
+        self._refresh_timeline_clips(preferred_clip=self.playback_clip_name, preferred_frame=self.anim_timeline_spin.value())
+        self._set_active_bone_and_refresh(parent if parent is not None else self.puppet)
+        self.view.setFocus()
+
+    def _set_active_bone_sprite(self):
+        if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
+            return
+
+        if int(getattr(self.active_bone, "spriteIndex", -1)) >= 0:
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "Replace Sprite",
+                f"Bone '{self.active_bone.label}' already has a sprite assigned. Replace it?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if answer != QtWidgets.QMessageBox.Yes:
+                return
+
+        selected_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Sprite File",
+            "",
+            "Images (*.bmp *.png *.jpg *.jpeg *.gif *.webp);;All Files (*)",
+        )
+        if not selected_path:
+            return
+
+        sprites_dir = self._current_sprites_dir()
+        if not sprites_dir:
+            QtWidgets.QMessageBox.warning(self, "Sprite", "Sprite directory is not available.")
+            return
+
+        os.makedirs(sprites_dir, exist_ok=True)
+        src_abs = self._normalize_fs_path(selected_path)
+        existing_index = next(
+            (
+                idx
+                for idx, path in enumerate(self.sprite_paths)
+                if self._normalize_fs_path(path) == src_abs
+            ),
+            None,
+        )
+        if existing_index is None:
+            base_name = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(os.path.basename(selected_path))[0]).strip("_")
+            if not base_name:
+                base_name = "sprite"
+            ext = os.path.splitext(selected_path)[1].lower() or ".bmp"
+            target_name = f"{base_name}{ext}"
+            target_path = os.path.join(sprites_dir, target_name)
+            suffix = 1
+            while os.path.exists(target_path) and self._normalize_fs_path(target_path) != src_abs:
+                target_name = f"{base_name}_{suffix}{ext}"
+                target_path = os.path.join(sprites_dir, target_name)
+                suffix += 1
+
+            try:
+                # Validate using the same loader path used by project startup.
+                spritesLoader.load_sprite_from_file(selected_path)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "Sprite", f"Invalid sprite file:\n{exc}")
+                return
+
+            if self._normalize_fs_path(target_path) != src_abs:
+                try:
+                    shutil.copy2(selected_path, target_path)
+                except Exception as exc:
+                    QtWidgets.QMessageBox.warning(self, "Sprite", f"Failed to copy sprite:\n{exc}")
+                    return
+
+            try:
+                sprite_obj = spritesLoader.load_sprite_from_file(target_path)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "Sprite", f"Invalid sprite file:\n{exc}")
+                return
+
+            self.sprites.append(sprite_obj)
+            self.sprite_paths.append(target_path)
+            sprite_index = len(self.sprites) - 1
+        else:
+            sprite_index = int(existing_index)
+
+        self.active_bone.spriteIndex = sprite_index
+        self.active_bone.sprite = self.sprites[sprite_index]
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item._sprite_cache.clear()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self._update_edit_tools_state()
+        self.view.setFocus()
+
+    def _rotate_active_sprite_base(self, degrees):
+        if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
+            return
+        if int(getattr(self.active_bone, "spriteIndex", -1)) < 0:
+            return
+
+        try:
+            delta = float(degrees) * math.pi / 180.0
+        except Exception:
+            return
+
+        current = float(getattr(self.active_bone, "baseSpriteRotation", 0.0))
+        rotated = current + delta
+        self.active_bone.baseSpriteRotation = ((rotated + math.pi) % (2.0 * math.pi)) - math.pi
+
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item._sprite_cache.clear()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self.view.setFocus()
 
     def _deserialize_animation_clips(self, source):
         clips = {}
@@ -1147,9 +1599,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _load_puppet_file(self, file_path):
         bundle = puppetImporter.importPuppetBundleFromJson(file_path)
         self.puppet = bundle["puppet"]
+        self.sprites = list(bundle.get("sprites") or [])
         self.puppet_file_path = file_path
         self.puppet_file_base = os.path.splitext(file_path)[0]
         self.settings["lastPuppetFile"] = file_path
+        raw = bundle.get("raw") or {}
+        self.sprites_path = str(raw.get("spritesPath") or f"sprites_{self.puppet.label.replace('Root', '')}")
+        self.sprite_paths = list(bundle.get("spritePaths") or [])
         self.bones = self._collect_bones(self.puppet)
         self.active_bone = self.puppet
         self._load_animation_clips(bundle.get("animations"))
@@ -1170,6 +1626,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_item.set_active_bone(self.active_bone)
         self._populate_bone_list()
         self._refresh_coords()
+        self._update_edit_tools_state()
         self._update_window_title()
         self.view.setFocus()
 
@@ -1228,7 +1685,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "angle": 0.0,
             "bones": [],
         }
+        self.sprites_path = f"sprites_{file_stem}"
         self.puppet = puppet.Puppet(puppet_json, [])
+        self.sprites = []
+        self.sprite_paths = []
         self.bones = self._collect_bones(self.puppet)
         self.active_bone = self.puppet
 
@@ -1239,7 +1699,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_file_base = os.path.splitext(self.puppet_file_path)[0]
         self.settings["lastPuppetFile"] = self.puppet_file_path
 
-        os.makedirs(f"sprites_{file_stem}", exist_ok=True)
+        os.makedirs(self._current_sprites_dir(), exist_ok=True)
         self.animation_clips = {}
         self._refresh_timeline_clips()
         self._update_animation_editor_state()
@@ -1250,6 +1710,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_item.set_active_bone(self.active_bone)
         self._populate_bone_list()
         self._refresh_coords()
+        self._update_edit_tools_state()
         self._layout_scene()
         self._update_window_title()
         self.view.setFocus()
@@ -1268,14 +1729,30 @@ class MainWindow(QtWidgets.QMainWindow):
             visit(bone)
         return collected
 
-    def _populate_bone_list(self):
+    def _populate_bone_list(self, selected_bone=None):
+        current = selected_bone
+        if current is None and self.active_bone in self.bones:
+            current = self.active_bone
+
+        self.bone_list.blockSignals(True)
         self.bone_list.clear()
-        for bone in self.bones:
+
+        target_row = 0
+        for idx, bone in enumerate(self.bones):
             item = QtWidgets.QListWidgetItem(bone.label)
             item.setData(QtCore.Qt.UserRole, bone)
             self.bone_list.addItem(item)
+            if bone is current:
+                target_row = idx
+
+        self.bone_list.blockSignals(False)
+
         if self.bones:
-            self.bone_list.setCurrentRow(0)
+            self.bone_list.setCurrentRow(target_row)
+        else:
+            self.active_bone = None
+            if hasattr(self, "coords_label"):
+                self._refresh_coords()
 
     def _on_bone_selected(self, current, previous):
         if not current:
@@ -1284,6 +1761,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_item.set_active_bone(self.active_bone)
         self._refresh_coords()
         self._update_animation_editor_state()
+        self._update_edit_tools_state()
         self._update_ghost_reference_pose(self.playback_clip_name, self.anim_timeline_spin.value())
         self.view.setFocus()
 
