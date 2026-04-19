@@ -1,4 +1,5 @@
 import os
+import re
 
 from PIL import Image
 
@@ -38,7 +39,18 @@ def importSpriteEntries(path):
     entries = []
     if not os.path.isdir(path):
         return entries
-    for bmpFile in os.listdir(path):
+
+    def sprite_sort_key(file_name):
+        stem = os.path.splitext(file_name)[0]
+        match = re.match(r"^(\d+)", stem)
+        if match:
+            try:
+                return (0, int(match.group(1)), file_name.lower())
+            except Exception:
+                pass
+        return (1, file_name.lower())
+
+    for bmpFile in sorted(os.listdir(path), key=sprite_sort_key):
         bmpPath = os.path.join(path, bmpFile)
         if not os.path.isfile(bmpPath):
             continue

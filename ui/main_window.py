@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import math
+import uuid
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -12,7 +13,9 @@ import puppetExporter
 import puppetImporter
 import spritesLoader
 from app_constants import DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH, DEFAULT_SETTINGS
+from ui import animation_clips
 from ui.graphics import PuppetItem, PuppetScene
+from ui.sprite_manager_dialog import SpriteManagerDialog
 from ui.view import KeyframeTimelineSlider, PuppetView
 
 
@@ -143,6 +146,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_sprite_button = QtWidgets.QPushButton("Sprite")
         self.edit_sprite_button.clicked.connect(self._set_active_bone_sprite)
         layout.addWidget(self.edit_sprite_button)
+
+        self.edit_add_sprites_button = QtWidgets.QPushButton("Manage Sprites")
+        self.edit_add_sprites_button.clicked.connect(self._manage_sprites)
+        layout.addWidget(self.edit_add_sprites_button)
 
         sprite_rot_row = QtWidgets.QHBoxLayout()
         sprite_rot_row.addWidget(QtWidgets.QLabel("Sprite Rot"))
@@ -406,6 +413,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_add_bone_button.setEnabled(has_puppet and has_active and self._is_edit_mode())
         self.edit_reparent_bone_button.setEnabled(has_puppet and has_active and not active_is_root and self._is_edit_mode())
         self.edit_sprite_button.setEnabled(has_puppet and has_active and not active_is_root and self._is_edit_mode())
+        self.edit_add_sprites_button.setEnabled(has_puppet and self._is_edit_mode())
         self.edit_sprite_rot_left_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
         self.edit_sprite_rot_flip_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
         self.edit_sprite_rot_right_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
@@ -570,6 +578,266 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_active_bone_and_refresh(parent if parent is not None else self.puppet)
         self.view.setFocus()
 
+    def _find_sprite_index_by_path(self, path):
+        normalized = self._normalize_fs_path(path)
+        for idx, existing_path in enumerate(self.sprite_paths):
+            if self._normalize_fs_path(existing_path) == normalized:
+                return idx
+        return None
+
+    def _is_path_within_directory(self, path, directory):
+        try:
+            abs_path = os.path.abspath(str(path))
+            abs_dir = os.path.abspath(str(directory))
+            return os.path.commonpath([abs_path, abs_dir]) == abs_dir
+        except Exception:
+            return False
+
+    def _sprite_name_parts(self, path):
+        base_name = os.path.basename(str(path))
+        stem, ext = os.path.splitext(base_name)
+        stem = re.sub(r"^\d+[_\-\s]*", "", stem).strip()
+        stem = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_")
+        if not stem:
+            stem = "sprite"
+        if not ext:
+            ext = ".bmp"
+        return stem, ext.lower()
+
+    def _indexed_sprite_name(self, index, stem, ext, used_names, index_width):
+        safe_stem = re.sub(r"[^A-Za-z0-9_-]+", "_", str(stem)).strip("_")
+        if not safe_stem:
+            safe_stem = "sprite"
+        safe_ext = str(ext).lower() if str(ext).strip() else ".bmp"
+        if not safe_ext.startswith("."):
+            safe_ext = f".{safe_ext}"
+
+        base = f"{index:0{index_width}d}_{safe_stem}"
+        candidate = f"{base}{safe_ext}"
+        suffix = 1
+        while candidate.lower() in used_names:
+            candidate = f"{base}_{suffix}{safe_ext}"
+            suffix += 1
+        used_names.add(candidate.lower())
+        return candidate
+
+    def _apply_sprite_library(self, desired_paths):
+        if self.puppet is None:
+            raise ValueError("Open or create a puppet first.")
+
+        sprites_dir = self._current_sprites_dir()
+        if not sprites_dir:
+            raise ValueError("Sprite directory is not available.")
+        os.makedirs(sprites_dir, exist_ok=True)
+
+        old_paths = list(self.sprite_paths)
+        old_norm_to_index = {self._normalize_fs_path(path): idx for idx, path in enumerate(old_paths)}
+
+        seen_sources = set()
+        entries = []
+        for raw_path in desired_paths or []:
+            source_path = os.path.abspath(str(raw_path))
+            source_norm = self._normalize_fs_path(source_path)
+            if source_norm in seen_sources:
+                continue
+            seen_sources.add(source_norm)
+
+            if not os.path.isfile(source_path):
+                raise ValueError(f"Sprite file was not found:\n{source_path}")
+
+            try:
+                # Validate using the same loader path used by project startup.
+                spritesLoader.load_sprite_from_file(source_path)
+            except Exception as exc:
+                raise ValueError(f"Invalid sprite file:\n{source_path}\n\n{exc}") from exc
+
+            stem, ext = self._sprite_name_parts(source_path)
+            entries.append(
+                {
+                    "sourcePath": source_path,
+                    "sourceNorm": source_norm,
+                    "oldIndex": old_norm_to_index.get(source_norm),
+                    "stem": stem,
+                    "ext": ext,
+                }
+            )
+
+        temp_dir = os.path.join(sprites_dir, f"__sprite_manage_{uuid.uuid4().hex}")
+        os.makedirs(temp_dir, exist_ok=False)
+
+        try:
+            index_width = max(2, len(str(max(0, len(entries) - 1))))
+            used_names = set()
+            for idx, entry in enumerate(entries):
+                final_name = self._indexed_sprite_name(
+                    idx,
+                    entry["stem"],
+                    entry["ext"],
+                    used_names,
+                    index_width,
+                )
+                temp_path = os.path.join(temp_dir, final_name)
+                shutil.copy2(entry["sourcePath"], temp_path)
+                entry["finalName"] = final_name
+                entry["tempPath"] = temp_path
+
+            new_paths = []
+            for entry in entries:
+                final_path = os.path.join(sprites_dir, entry["finalName"])
+                os.replace(entry["tempPath"], final_path)
+                entry["finalPath"] = final_path
+                new_paths.append(final_path)
+        finally:
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
+
+        keep_norm = {self._normalize_fs_path(path) for path in new_paths}
+        for old_path in old_paths:
+            old_norm = self._normalize_fs_path(old_path)
+            if old_norm in keep_norm:
+                continue
+            if not self._is_path_within_directory(old_path, sprites_dir):
+                continue
+            if os.path.isfile(old_path):
+                try:
+                    os.remove(old_path)
+                except Exception:
+                    pass
+
+        new_sprites = []
+        for path in new_paths:
+            new_sprites.append(spritesLoader.load_sprite_from_file(path))
+
+        source_to_new = {}
+        source_was_new = {}
+        for new_index, entry in enumerate(entries):
+            source_to_new[entry["sourceNorm"]] = new_index
+            source_was_new[entry["sourceNorm"]] = entry["oldIndex"] is None
+
+        self.sprites = new_sprites
+        self.sprite_paths = new_paths
+
+        for bone in self.bones:
+            if not hasattr(bone, "spriteIndex"):
+                continue
+            try:
+                old_index = int(getattr(bone, "spriteIndex", -1))
+            except Exception:
+                old_index = -1
+
+            if old_index < 0:
+                bone.spriteIndex = -1
+                if hasattr(bone, "sprite"):
+                    bone.sprite = None
+                continue
+
+            if old_index >= len(self.sprites):
+                bone.spriteIndex = -1
+                if hasattr(bone, "sprite"):
+                    bone.sprite = None
+                continue
+
+            bone.spriteIndex = int(old_index)
+            bone.sprite = self.sprites[old_index]
+
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item._sprite_cache.clear()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self._update_edit_tools_state()
+
+        removed_count = max(0, len(old_paths) - len(new_paths))
+        added_count = sum(1 for entry in entries if entry["oldIndex"] is None)
+        return {
+            "addedCount": added_count,
+            "removedCount": removed_count,
+            "sourceToIndex": source_to_new,
+            "sourceWasNew": source_was_new,
+        }
+
+    def _ensure_sprite_in_library(self, selected_path):
+        source_norm = self._normalize_fs_path(selected_path)
+        existing_source_idx = self._find_sprite_index_by_path(source_norm)
+        if existing_source_idx is not None:
+            return int(existing_source_idx), False
+
+        result = self._apply_sprite_library(list(self.sprite_paths) + [selected_path])
+        sprite_index = result["sourceToIndex"].get(source_norm)
+        if sprite_index is None:
+            raise ValueError("Failed to resolve sprite index after import.")
+        was_added = bool(result["sourceWasNew"].get(source_norm, False))
+        return int(sprite_index), was_added
+
+    def _reload_sprites_from_folder(self):
+        if self.puppet is None:
+            return
+
+        sprites_dir = self._current_sprites_dir()
+        if not sprites_dir:
+            self.sprites = []
+            self.sprite_paths = []
+            return
+
+        sprite_entries = spritesLoader.importSpriteEntries(sprites_dir)
+        self.sprites = [entry["sprite"] for entry in sprite_entries]
+        self.sprite_paths = [entry["path"] for entry in sprite_entries]
+
+        for bone in self.bones:
+            if not hasattr(bone, "spriteIndex"):
+                continue
+            try:
+                sprite_index = int(getattr(bone, "spriteIndex", -1))
+            except Exception:
+                sprite_index = -1
+
+            if sprite_index < 0:
+                bone.spriteIndex = -1
+                if hasattr(bone, "sprite"):
+                    bone.sprite = None
+                continue
+
+            if sprite_index >= len(self.sprites):
+                bone.spriteIndex = -1
+                if hasattr(bone, "sprite"):
+                    bone.sprite = None
+                continue
+
+            bone.spriteIndex = int(sprite_index)
+            bone.sprite = self.sprites[sprite_index]
+
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item._sprite_cache.clear()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self._update_edit_tools_state()
+
+    def _manage_sprites(self):
+        if self.puppet is None:
+            QtWidgets.QMessageBox.information(self, "Manage Sprites", "Open or create a puppet first.")
+            return
+
+        dialog = SpriteManagerDialog(self.sprite_paths, start_dir=self._current_sprites_dir(), parent=self)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            self.view.setFocus()
+            return
+
+        try:
+            result = self._apply_sprite_library(dialog.paths())
+            self._reload_sprites_from_folder()
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Manage Sprites", str(exc))
+            self.view.setFocus()
+            return
+
+        QtWidgets.QMessageBox.information(
+            self,
+            "Manage Sprites",
+            f"Added: {result['addedCount']}, removed: {result['removedCount']}, total: {len(self.sprite_paths)}",
+        )
+        self.view.setFocus()
+
     def _set_active_bone_sprite(self):
         if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
             return
@@ -594,59 +862,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not selected_path:
             return
 
-        sprites_dir = self._current_sprites_dir()
-        if not sprites_dir:
-            QtWidgets.QMessageBox.warning(self, "Sprite", "Sprite directory is not available.")
+        try:
+            sprite_index, _ = self._ensure_sprite_in_library(selected_path)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Sprite", str(exc))
             return
-
-        os.makedirs(sprites_dir, exist_ok=True)
-        src_abs = self._normalize_fs_path(selected_path)
-        existing_index = next(
-            (
-                idx
-                for idx, path in enumerate(self.sprite_paths)
-                if self._normalize_fs_path(path) == src_abs
-            ),
-            None,
-        )
-        if existing_index is None:
-            base_name = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(os.path.basename(selected_path))[0]).strip("_")
-            if not base_name:
-                base_name = "sprite"
-            ext = os.path.splitext(selected_path)[1].lower() or ".bmp"
-            target_name = f"{base_name}{ext}"
-            target_path = os.path.join(sprites_dir, target_name)
-            suffix = 1
-            while os.path.exists(target_path) and self._normalize_fs_path(target_path) != src_abs:
-                target_name = f"{base_name}_{suffix}{ext}"
-                target_path = os.path.join(sprites_dir, target_name)
-                suffix += 1
-
-            try:
-                # Validate using the same loader path used by project startup.
-                spritesLoader.load_sprite_from_file(selected_path)
-            except Exception as exc:
-                QtWidgets.QMessageBox.warning(self, "Sprite", f"Invalid sprite file:\n{exc}")
-                return
-
-            if self._normalize_fs_path(target_path) != src_abs:
-                try:
-                    shutil.copy2(selected_path, target_path)
-                except Exception as exc:
-                    QtWidgets.QMessageBox.warning(self, "Sprite", f"Failed to copy sprite:\n{exc}")
-                    return
-
-            try:
-                sprite_obj = spritesLoader.load_sprite_from_file(target_path)
-            except Exception as exc:
-                QtWidgets.QMessageBox.warning(self, "Sprite", f"Invalid sprite file:\n{exc}")
-                return
-
-            self.sprites.append(sprite_obj)
-            self.sprite_paths.append(target_path)
-            sprite_index = len(self.sprites) - 1
-        else:
-            sprite_index = int(existing_index)
 
         self.active_bone.spriteIndex = sprite_index
         self.active_bone.sprite = self.sprites[sprite_index]
@@ -679,114 +899,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.setFocus()
 
     def _deserialize_animation_clips(self, source):
-        clips = {}
-        payload = source
-        if isinstance(source, dict) and isinstance(source.get("animations"), list):
-            payload = source.get("animations")
-
-        if isinstance(payload, list):
-            for item in payload:
-                if not isinstance(item, dict):
-                    continue
-                clip_name = str(item.get("animationName", "")).strip()
-                if not clip_name:
-                    continue
-                clips[clip_name] = self._normalize_clip_data(item)
-            return clips
-
-        if isinstance(payload, dict):
-            for clip_name, clip_data in payload.items():
-                if not isinstance(clip_data, dict):
-                    continue
-                clips[str(clip_name)] = self._normalize_clip_data(clip_data)
-        return clips
+        return animation_clips.deserialize_animation_clips(source)
 
     def _serialize_animation_clips(self):
-        animations = []
-        for clip_name in sorted(self.animation_clips.keys()):
-            clip = self.animation_clips.get(clip_name, {})
-            tracks = self._clip_tracks(clip)
-            serialized_tracks = []
-            for bone_label in sorted(tracks.keys()):
-                keyframes = tracks.get(bone_label, [])
-                serialized_tracks.append(
-                    {
-                        "boneLabel": bone_label,
-                        "keyframes": keyframes,
-                    }
-                )
-
-            item = {"animationName": clip_name, "tracks": serialized_tracks}
-            if len(serialized_tracks) == 1:
-                item["boneLabel"] = serialized_tracks[0]["boneLabel"]
-                item["keyframes"] = serialized_tracks[0]["keyframes"]
-            animations.append(item)
-        return animations
+        return animation_clips.serialize_animation_clips(self.animation_clips)
 
     def _normalize_clip_data(self, source):
-        clip = {"tracks": {}}
-        if not isinstance(source, dict):
-            return clip
-
-        tracks = clip["tracks"]
-        raw_tracks = source.get("tracks")
-
-        if isinstance(raw_tracks, list):
-            for track_item in raw_tracks:
-                if not isinstance(track_item, dict):
-                    continue
-                bone_label = str(track_item.get("boneLabel") or track_item.get("bone_label") or "").strip()
-                tracks[bone_label] = self._normalize_clip_keyframes(
-                    track_item.get("keyframes", []),
-                    track_item.get("duration"),
-                )
-        elif isinstance(raw_tracks, dict):
-            for raw_bone_label, track_item in raw_tracks.items():
-                bone_label = str(raw_bone_label).strip()
-                if isinstance(track_item, dict):
-                    keyframes_source = track_item.get("keyframes", [])
-                    duration_source = track_item.get("duration")
-                else:
-                    keyframes_source = track_item
-                    duration_source = None
-                tracks[bone_label] = self._normalize_clip_keyframes(keyframes_source, duration_source)
-
-        legacy_keyframes = source.get("keyframes")
-        legacy_bone_label = str(source.get("boneLabel") or source.get("bone_label") or "").strip()
-        if isinstance(legacy_keyframes, list):
-            merged = list(tracks.get(legacy_bone_label, []))
-            merged.extend(self._normalize_clip_keyframes(legacy_keyframes, source.get("duration")))
-            tracks[legacy_bone_label] = self._normalize_clip_keyframes(merged)
-        return clip
+        return animation_clips.normalize_clip_data(source)
 
     def _clip_tracks(self, clip):
-        if not isinstance(clip, dict):
-            return {}
-        tracks = clip.get("tracks")
-        if isinstance(tracks, dict):
-            return tracks
-        tracks = {}
-        clip["tracks"] = tracks
-        return tracks
+        return animation_clips.clip_tracks(clip)
 
     def _clip_timeline_values(self, clip):
-        values = []
-        tracks = self._clip_tracks(clip)
-        for keyframes in tracks.values():
-            if not isinstance(keyframes, list):
-                continue
-            for keyframe in keyframes:
-                try:
-                    values.append(int(keyframe.get("timelineFrame", 0)))
-                except Exception:
-                    continue
-        return values
+        return animation_clips.clip_timeline_values(clip)
 
     def _clip_timeline_bounds(self, clip):
-        values = self._clip_timeline_values(clip)
-        if not values:
-            return None, None
-        return min(values), max(values)
+        return animation_clips.clip_timeline_bounds(clip)
 
     def _capture_playback_base_pose(self):
         base = {}
@@ -799,104 +927,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.playback_base_pose = base
 
     def _keyframes_timeline_bounds(self, keyframes):
-        if not isinstance(keyframes, list) or not keyframes:
-            return None, None
-        values = []
-        for keyframe in keyframes:
-            try:
-                values.append(int(keyframe.get("timelineFrame", 0)))
-            except Exception:
-                continue
-        if not values:
-            return None, None
-        return min(values), max(values)
+        return animation_clips.keyframes_timeline_bounds(keyframes)
 
     def _interpolate_absolute_poses(self, keyframes):
-        ordered = self._normalize_clip_keyframes(keyframes)
-        if not ordered:
-            return []
-        if len(ordered) == 1:
-            only = ordered[0]
-            return [{"x": float(only.get("x", 0.0)), "y": float(only.get("y", 0.0)), "angle": float(only.get("angle", 0.0))}]
-
-        poses = [{"x": float(ordered[0]["x"]), "y": float(ordered[0]["y"]), "angle": float(ordered[0]["angle"])}]
-        for idx in range(len(ordered) - 1):
-            start = ordered[idx]
-            end = ordered[idx + 1]
-            start_frame = int(start.get("timelineFrame", 0))
-            end_frame = int(end.get("timelineFrame", 0))
-            span = end_frame - start_frame
-            if span <= 0:
-                continue
-            for step in range(1, span + 1):
-                alpha = step / span
-                poses.append(
-                    {
-                        "x": float(start["x"]) + (float(end["x"]) - float(start["x"])) * alpha,
-                        "y": float(start["y"]) + (float(end["y"]) - float(start["y"])) * alpha,
-                        "angle": float(start["angle"]) + (float(end["angle"]) - float(start["angle"])) * alpha,
-                    }
-                )
-        return poses
+        return animation_clips.interpolate_absolute_poses(keyframes)
 
     def _normalize_clip_keyframes(self, keyframes, legacy_duration=None):
-        if not isinstance(keyframes, list):
-            keyframes = []
-
-        step = 1
-        try:
-            if legacy_duration is not None:
-                step = max(1, int(legacy_duration))
-        except Exception:
-            step = 1
-
-        normalized = []
-        for idx, raw in enumerate(keyframes):
-            if not isinstance(raw, dict):
-                continue
-            timeline_frame = raw.get("timelineFrame")
-            if timeline_frame is None:
-                timeline_frame = raw.get("timeline")
-            if timeline_frame is None:
-                timeline_frame = idx * step
-            try:
-                timeline_frame = int(round(float(timeline_frame)))
-            except Exception:
-                timeline_frame = idx * step
-
-            try:
-                x = float(raw.get("x", 0.0))
-            except Exception:
-                x = 0.0
-            try:
-                y = float(raw.get("y", 0.0))
-            except Exception:
-                y = 0.0
-            try:
-                angle = float(raw.get("angle", 0.0))
-            except Exception:
-                angle = 0.0
-
-            normalized.append(
-                {
-                    "x": x,
-                    "y": y,
-                    "angle": angle,
-                    "label": str(raw.get("label", f"frame{idx + 1}")),
-                    "timelineFrame": max(0, timeline_frame),
-                }
-            )
-
-        dedup = {}
-        for item in normalized:
-            dedup[item["timelineFrame"]] = item
-        ordered = [dedup[frame] for frame in sorted(dedup.keys())]
-        self._renumber_keyframes(ordered)
-        return ordered
+        return animation_clips.normalize_clip_keyframes(keyframes, legacy_duration)
 
     def _renumber_keyframes(self, keyframes):
-        for idx, item in enumerate(keyframes):
-            item["label"] = f"frame{idx + 1}"
+        animation_clips.renumber_keyframes(keyframes)
 
     def _load_animation_clips(self, embedded_animations=None):
         self.animation_clips = self._deserialize_animation_clips(embedded_animations) if embedded_animations is not None else {}
@@ -1499,6 +1539,9 @@ class MainWindow(QtWidgets.QMainWindow):
         open_action = file_menu.addAction("Open")
         open_action.triggered.connect(self._open_puppet)
 
+        manage_sprites_action = file_menu.addAction("Manage Sprites")
+        manage_sprites_action.triggered.connect(self._manage_sprites)
+
         save_action = file_menu.addAction("Save")
         save_action.triggered.connect(self._save)
 
@@ -1558,6 +1601,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _setup_shortcuts(self):
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+N"), self, activated=self._new_puppet)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+O"), self, activated=self._open_puppet)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+I"), self, activated=self._manage_sprites)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+S"), self, activated=self._save)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Shift+S"), self, activated=self._save_as)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+K"), self, activated=self._add_animation_keyframe)
@@ -1885,7 +1929,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.puppet is None or not self.puppet_file_base:
             QtWidgets.QMessageBox.information(self, "Export", "Open a puppet file first.")
             return
-        puppetExporter.export_cpuppet(self.puppet, self.puppet_file_base)
+        puppetExporter.export_cpuppet(
+            self.puppet,
+            self.puppet_file_base,
+            animations=self._serialize_animation_clips(),
+            sprites_path=self.sprites_path,
+        )
 
     def keyPressEvent(self, event):
         key = event.key()

@@ -1,0 +1,42 @@
+{
+    "spritesPath": "sprites_newPuppet",
+    "label": "newPuppetRoot",
+    "x": 160,
+    "y": 236,
+    "angle": 0.0,
+    "bones": [
+        {
+            "label": "newBone1",
+            "x": 0.0,
+            "y": -216.0,
+            "angle": 0.0,
+            "spriteIndex": 1,
+            "baseSpriteRotation": 1.5707963267948966,
+            "childBonesLayer1": [],
+            "childBonesLayer2": [
+                {
+                    "label": "newBoneArmParent",
+                    "x": 10.0,
+                    "y": 80.0,
+                    "angle": 0.0,
+                    "spriteIndex": -1,
+                    "baseSpriteRotation": 0.0,
+                    "childBonesLayer1": [],
+                    "childBonesLayer2": [
+                        {
+                            "label": "newBoneArm1",
+                            "x": 57.0,
+                            "y": 0.0,
+                            "angle": 0.0,
+                            "spriteIndex": 0,
+                            "baseSpriteRotation": 0.0,
+                            "childBonesLayer1": [],
+                            "childBonesLayer2": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "animations": []
+}
