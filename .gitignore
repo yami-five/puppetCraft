@@ -1,4 +1,7 @@
-sprites/
-backup*
 .vscode/
 __pycache__/
+*sprites*/
+backup*
+*.json
+*.c
+*.pyc
