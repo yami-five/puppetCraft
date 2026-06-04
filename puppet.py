@@ -1,5 +1,21 @@
 import numpy, math
 
+
+def normalize_sprite_mirror_axis(value):
+    text = str(value or "").strip().lower()
+    if not text or text == "none":
+        return "none"
+
+    has_x = "x" in text
+    has_y = "y" in text
+    if has_x and has_y:
+        return "xy"
+    if has_x:
+        return "x"
+    if has_y:
+        return "y"
+    return "none"
+
 class Sprite:
     def __init__(self,label,size,pixels):
         self.label=label
@@ -14,6 +30,7 @@ class Bone:
         self.angle=boneJson["angle"]
         self.spriteIndex=boneJson["spriteIndex"]
         self.baseSpriteRotation=boneJson["baseSpriteRotation"]
+        self.spriteMirrorAxis=normalize_sprite_mirror_axis(boneJson.get("spriteMirrorAxis", "none"))
         if(self.spriteIndex>=0):
             self.sprite=sprites[self.spriteIndex]
         self.localMatrix=numpy.array([[math.cos(self.angle),-math.sin(self.angle),int(round(self.x))],[math.sin(self.angle),math.cos(self.angle),int(round(self.y))],[0,0,1]])
@@ -33,6 +50,7 @@ class Bone:
             "angle": self.angle,
             "spriteIndex": self.spriteIndex,
             "baseSpriteRotation": self.baseSpriteRotation,
+            "spriteMirrorAxis": self.spriteMirrorAxis,
             "childBonesLayer1": [],
             "childBonesLayer2": [],
         }
@@ -56,6 +74,8 @@ class Puppet:
         self.x=puppetJson["x"]
         self.y=puppetJson["y"]
         self.angle=puppetJson["angle"]
+        self.spritesPath=str(puppetJson.get("spritesPath") or f"sprites_{(self.label).replace('Root','')}")
+        self.backgroundImagePath=str(puppetJson.get("backgroundImagePath") or "")
         self.bones=[]
         self.localMatrix=numpy.array([[math.cos(self.angle),-math.sin(self.angle),int(round(self.x))],[math.sin(self.angle),math.cos(self.angle),int(round(self.y))],[0,0,1]])
         self.worldMatrix=self.localMatrix
@@ -65,7 +85,8 @@ class Puppet:
         
     def get_puppet_dict(self):
         return {
-            "spritesPath":f"sprites_{(self.label).replace('Root','')}",
+            "spritesPath":str(self.spritesPath or f"sprites_{(self.label).replace('Root','')}"),
+            "backgroundImagePath":str(self.backgroundImagePath or ""),
             "label":self.label,
             "x": self.x,
             "y": self.y,

@@ -31,6 +31,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sprites = []
         self.sprite_paths = []
         self.sprites_path = ""
+        self.background_image_path = ""
         self.canvas_width, self.canvas_height = DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT
         self.canvas_pan_x = 0.0
         self.canvas_pan_y = 0.0
@@ -42,6 +43,11 @@ class MainWindow(QtWidgets.QMainWindow):
             QtGui.QBrush(QtGui.QColor(0, 0, 0)),
         )
         self.canvas_bg_item.setZValue(-90)
+        self.canvas_image_item = QtWidgets.QGraphicsPixmapItem()
+        self.canvas_image_item.setTransformationMode(QtCore.Qt.SmoothTransformation)
+        self.canvas_image_item.setZValue(-85)
+        self.canvas_image_item.setVisible(False)
+        self.scene.addItem(self.canvas_image_item)
         self.border_item = self.scene.addRect(
             QtCore.QRectF(0, 0, self.canvas_width, self.canvas_height).adjusted(0.5, 0.5, -0.5, -0.5),
             QtGui.QPen(QtGui.QColor(255, 255, 255)),
@@ -163,6 +169,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_sprite_rot_right_button.clicked.connect(lambda: self._rotate_active_sprite_base(90))
         sprite_rot_row.addWidget(self.edit_sprite_rot_right_button)
         layout.addLayout(sprite_rot_row)
+
+        sprite_mirror_row = QtWidgets.QHBoxLayout()
+        sprite_mirror_row.addWidget(QtWidgets.QLabel("Sprite Mirror"))
+        self.edit_sprite_mirror_x_button = QtWidgets.QPushButton("X")
+        self.edit_sprite_mirror_x_button.setCheckable(True)
+        self.edit_sprite_mirror_x_button.clicked.connect(lambda: self._toggle_active_sprite_mirror_axis("x"))
+        sprite_mirror_row.addWidget(self.edit_sprite_mirror_x_button)
+        self.edit_sprite_mirror_y_button = QtWidgets.QPushButton("Y")
+        self.edit_sprite_mirror_y_button.setCheckable(True)
+        self.edit_sprite_mirror_y_button.clicked.connect(lambda: self._toggle_active_sprite_mirror_axis("y"))
+        sprite_mirror_row.addWidget(self.edit_sprite_mirror_y_button)
+        self.edit_sprite_mirror_clear_button = QtWidgets.QPushButton("Clear")
+        self.edit_sprite_mirror_clear_button.clicked.connect(self._clear_active_sprite_mirror_axis)
+        sprite_mirror_row.addWidget(self.edit_sprite_mirror_clear_button)
+        layout.addLayout(sprite_mirror_row)
+
+        bone_mirror_row = QtWidgets.QHBoxLayout()
+        bone_mirror_row.addWidget(QtWidgets.QLabel("Bone Mirror"))
+        self.edit_bone_mirror_x_button = QtWidgets.QPushButton("Flip X")
+        self.edit_bone_mirror_x_button.clicked.connect(lambda: self._mirror_active_bone_position("x"))
+        bone_mirror_row.addWidget(self.edit_bone_mirror_x_button)
+        self.edit_bone_mirror_y_button = QtWidgets.QPushButton("Flip Y")
+        self.edit_bone_mirror_y_button.clicked.connect(lambda: self._mirror_active_bone_position("y"))
+        bone_mirror_row.addWidget(self.edit_bone_mirror_y_button)
+        layout.addLayout(bone_mirror_row)
+
+        puppet_mirror_row = QtWidgets.QHBoxLayout()
+        puppet_mirror_row.addWidget(QtWidgets.QLabel("Puppet Mirror"))
+        self.edit_puppet_mirror_x_button = QtWidgets.QPushButton("Flip X")
+        self.edit_puppet_mirror_x_button.clicked.connect(lambda: self._mirror_whole_puppet_position("x"))
+        puppet_mirror_row.addWidget(self.edit_puppet_mirror_x_button)
+        self.edit_puppet_mirror_y_button = QtWidgets.QPushButton("Flip Y")
+        self.edit_puppet_mirror_y_button.clicked.connect(lambda: self._mirror_whole_puppet_position("y"))
+        puppet_mirror_row.addWidget(self.edit_puppet_mirror_y_button)
+        layout.addLayout(puppet_mirror_row)
 
         layer_row = QtWidgets.QHBoxLayout()
         layer_row.addWidget(QtWidgets.QLabel("Layer"))
@@ -305,8 +346,69 @@ class MainWindow(QtWidgets.QMainWindow):
             return ""
         return os.path.abspath(f"sprites_{self.puppet.label.replace('Root', '')}")
 
+    def _sync_puppet_paths(self):
+        if self.puppet is None:
+            return
+        default_sprites_path = f"sprites_{self.puppet.label.replace('Root', '')}"
+        self.puppet.spritesPath = str(self.sprites_path or default_sprites_path)
+        self.puppet.backgroundImagePath = str(self.background_image_path or "")
+
+    def _resolve_background_image_path(self, value, base_dir=""):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if os.path.isabs(text):
+            return os.path.abspath(text)
+        if base_dir:
+            return os.path.abspath(os.path.join(base_dir, text))
+        return os.path.abspath(text)
+
+    def _apply_background_image(self, show_error=False):
+        path = str(self.background_image_path or "").strip()
+        if not path:
+            self.canvas_image_item.setPixmap(QtGui.QPixmap())
+            self.canvas_image_item.setVisible(False)
+            self._layout_scene()
+            return True
+
+        pixmap = QtGui.QPixmap(path)
+        if pixmap.isNull():
+            self.canvas_image_item.setPixmap(QtGui.QPixmap())
+            self.canvas_image_item.setVisible(False)
+            self._layout_scene()
+            if show_error:
+                QtWidgets.QMessageBox.warning(self, "Background", f"Failed to load background image:\n{path}")
+            return False
+
+        self.canvas_image_item.setPixmap(pixmap)
+        self.canvas_image_item.setVisible(True)
+        self._layout_scene()
+        return True
+
+    def _set_background_image_path(self, value, base_dir="", show_error=False):
+        resolved_path = self._resolve_background_image_path(value, base_dir=base_dir)
+        self.background_image_path = resolved_path
+        if self.puppet is not None:
+            self.puppet.backgroundImagePath = resolved_path
+        return self._apply_background_image(show_error=show_error)
+
     def _normalize_fs_path(self, value):
         return os.path.normcase(os.path.normpath(os.path.abspath(str(value))))
+
+    def _normalize_sprite_mirror_axis(self, value):
+        text = str(value or "").strip().lower()
+        if not text or text == "none":
+            return "none"
+
+        has_x = "x" in text
+        has_y = "y" in text
+        if has_x and has_y:
+            return "xy"
+        if has_x:
+            return "x"
+        if has_y:
+            return "y"
+        return "none"
 
     def _child_layers(self, parent):
         if parent is None:
@@ -417,9 +519,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_sprite_rot_left_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
         self.edit_sprite_rot_flip_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
         self.edit_sprite_rot_right_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
+        self.edit_sprite_mirror_x_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
+        self.edit_sprite_mirror_y_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
+        self.edit_sprite_mirror_clear_button.setEnabled(has_puppet and has_active and has_sprite and not active_is_root and self._is_edit_mode())
+        self.edit_bone_mirror_x_button.setEnabled(has_puppet and has_active and not active_is_root and self._is_edit_mode())
+        self.edit_bone_mirror_y_button.setEnabled(has_puppet and has_active and not active_is_root and self._is_edit_mode())
+        self.edit_puppet_mirror_x_button.setEnabled(has_puppet and self._is_edit_mode())
+        self.edit_puppet_mirror_y_button.setEnabled(has_puppet and self._is_edit_mode())
         self.edit_delete_bone_button.setEnabled(has_puppet and has_active and not active_is_root and self._is_edit_mode())
         self.edit_layer_combo.setEnabled(can_change_layer and self._is_edit_mode())
         self.edit_apply_layer_button.setEnabled(can_change_layer and self._is_edit_mode())
+
+        sprite_mirror_axis = self._normalize_sprite_mirror_axis(
+            getattr(self.active_bone, "spriteMirrorAxis", "none") if has_active else "none"
+        )
+        self.edit_sprite_mirror_x_button.setChecked("x" in sprite_mirror_axis)
+        self.edit_sprite_mirror_y_button.setChecked("y" in sprite_mirror_axis)
 
         if can_change_layer:
             if layer_name == "childBonesLayer2":
@@ -459,6 +574,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "angle": 0.0,
             "spriteIndex": -1,
             "baseSpriteRotation": 0.0,
+            "spriteMirrorAxis": "none",
             "childBonesLayer1": [],
             "childBonesLayer2": [],
         }
@@ -898,6 +1014,149 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_coords()
         self.view.setFocus()
 
+    def _toggle_active_sprite_mirror_axis(self, axis):
+        if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
+            return
+        if int(getattr(self.active_bone, "spriteIndex", -1)) < 0:
+            return
+
+        axis_name = str(axis).strip().lower()
+        if axis_name not in ("x", "y"):
+            return
+
+        current = self._normalize_sprite_mirror_axis(getattr(self.active_bone, "spriteMirrorAxis", "none"))
+        has_x = "x" in current
+        has_y = "y" in current
+
+        if axis_name == "x":
+            has_x = not has_x
+        else:
+            has_y = not has_y
+
+        if has_x and has_y:
+            next_axis = "xy"
+        elif has_x:
+            next_axis = "x"
+        elif has_y:
+            next_axis = "y"
+        else:
+            next_axis = "none"
+
+        self.active_bone.spriteMirrorAxis = next_axis
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self._update_edit_tools_state()
+        self.view.setFocus()
+
+    def _clear_active_sprite_mirror_axis(self):
+        if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
+            return
+        if int(getattr(self.active_bone, "spriteIndex", -1)) < 0:
+            return
+
+        self.active_bone.spriteMirrorAxis = "none"
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self._update_edit_tools_state()
+        self.view.setFocus()
+
+    def _mirror_bone_subtree_position(self, bone, axis_name):
+        if axis_name == "x":
+            bone.x = -float(bone.x)
+        elif axis_name == "y":
+            bone.y = -float(bone.y)
+        else:
+            return
+
+        for child in bone.childBonesLayer1:
+            self._mirror_bone_subtree_position(child, axis_name)
+        for child in bone.childBonesLayer2:
+            self._mirror_bone_subtree_position(child, axis_name)
+
+    def _mirror_active_bone_position(self, axis):
+        if self.puppet is None or self.active_bone is None or self.active_bone is self.puppet:
+            return
+
+        axis_name = str(axis).strip().lower()
+        if axis_name not in ("x", "y"):
+            return
+
+        self._mirror_bone_subtree_position(self.active_bone, axis_name)
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self.view.setFocus()
+
+    def _toggle_bone_sprite_mirror_axis(self, bone, axis_name):
+        if bone is None:
+            return
+        if int(getattr(bone, "spriteIndex", -1)) < 0:
+            return
+
+        current = self._normalize_sprite_mirror_axis(getattr(bone, "spriteMirrorAxis", "none"))
+        has_x = "x" in current
+        has_y = "y" in current
+
+        if axis_name == "x":
+            has_x = not has_x
+        elif axis_name == "y":
+            has_y = not has_y
+        else:
+            return
+
+        if has_x and has_y:
+            bone.spriteMirrorAxis = "xy"
+        elif has_x:
+            bone.spriteMirrorAxis = "x"
+        elif has_y:
+            bone.spriteMirrorAxis = "y"
+        else:
+            bone.spriteMirrorAxis = "none"
+
+    def _mirror_bone_subtree_full(self, bone, axis_name):
+        if axis_name == "x":
+            bone.x = -float(bone.x)
+        elif axis_name == "y":
+            bone.y = -float(bone.y)
+        else:
+            return
+
+        # Keep center-line pivots stable: if a bone sits on the mirror axis,
+        # flipping its angle often causes an unwanted pose collapse.
+        eps = 1e-6
+        should_flip_angle = True
+        if axis_name == "x" and abs(float(bone.x)) <= eps:
+            should_flip_angle = False
+        if axis_name == "y" and abs(float(bone.y)) <= eps:
+            should_flip_angle = False
+        if should_flip_angle:
+            bone.angle = -float(bone.angle)
+        self._toggle_bone_sprite_mirror_axis(bone, axis_name)
+
+        for child in bone.childBonesLayer1:
+            self._mirror_bone_subtree_full(child, axis_name)
+        for child in bone.childBonesLayer2:
+            self._mirror_bone_subtree_full(child, axis_name)
+
+    def _mirror_whole_puppet_position(self, axis):
+        if self.puppet is None:
+            return
+
+        axis_name = str(axis).strip().lower()
+        if axis_name not in ("x", "y"):
+            return
+
+        for root_bone in self.puppet.bones:
+            self._mirror_bone_subtree_full(root_bone, axis_name)
+
+        self.puppet.recalculate_world_matrices()
+        self.puppet_item.update()
+        self._refresh_coords()
+        self._update_edit_tools_state()
+        self.view.setFocus()
+
     def _deserialize_animation_clips(self, source):
         return animation_clips.deserialize_animation_clips(source)
 
@@ -949,6 +1208,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.information(self, "Save Clips", "Open or save a puppet file first.")
             return False
         try:
+            self._sync_puppet_paths()
             puppetExporter.save_puppet(
                 self.puppet,
                 self.puppet_file_base,
@@ -1542,6 +1802,14 @@ class MainWindow(QtWidgets.QMainWindow):
         manage_sprites_action = file_menu.addAction("Manage Sprites")
         manage_sprites_action.triggered.connect(self._manage_sprites)
 
+        load_background_action = file_menu.addAction("Load Background")
+        load_background_action.triggered.connect(self._load_background_image)
+
+        clear_background_action = file_menu.addAction("Clear Background")
+        clear_background_action.triggered.connect(self._clear_background_image)
+
+        file_menu.addSeparator()
+
         save_action = file_menu.addAction("Save")
         save_action.triggered.connect(self._save)
 
@@ -1636,6 +1904,34 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         return selected_path
 
+    def _background_start_dir(self):
+        if self.background_image_path:
+            return os.path.dirname(self.background_image_path)
+        if self.puppet_file_path:
+            return os.path.dirname(self.puppet_file_path)
+        return ""
+
+    def _load_background_image(self):
+        if self.puppet is None:
+            QtWidgets.QMessageBox.information(self, "Background", "Open or create a puppet first.")
+            return
+
+        selected_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Background Image",
+            self._background_start_dir(),
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;All Files (*)",
+        )
+        if not selected_path:
+            return
+
+        self._set_background_image_path(selected_path, show_error=True)
+        self.view.setFocus()
+
+    def _clear_background_image(self):
+        self._set_background_image_path("")
+        self.view.setFocus()
+
     def _update_window_title(self):
         file_name = os.path.basename(self.puppet_file_path) if self.puppet_file_path else "No puppet"
         self.setWindowTitle(f"Puppet Craft - {file_name}")
@@ -1648,7 +1944,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_file_base = os.path.splitext(file_path)[0]
         self.settings["lastPuppetFile"] = file_path
         raw = bundle.get("raw") or {}
-        self.sprites_path = str(raw.get("spritesPath") or f"sprites_{self.puppet.label.replace('Root', '')}")
+        self.sprites_path = str(
+            raw.get("spritesPath")
+            or getattr(self.puppet, "spritesPath", "")
+            or f"sprites_{self.puppet.label.replace('Root', '')}"
+        )
+        self.puppet.spritesPath = self.sprites_path
+        self._set_background_image_path(
+            raw.get("backgroundImagePath") or getattr(self.puppet, "backgroundImagePath", ""),
+            base_dir=os.path.dirname(file_path),
+            show_error=False,
+        )
         self.sprite_paths = list(bundle.get("spritePaths") or [])
         self.bones = self._collect_bones(self.puppet)
         self.active_bone = self.puppet
@@ -1722,15 +2028,19 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "New Puppet", "Invalid puppet name.")
             return
 
+        self.sprites_path = f"sprites_{file_stem}"
         puppet_json = {
+            "spritesPath": self.sprites_path,
+            "backgroundImagePath": "",
             "label": root_label,
             "x": self.canvas_width // 2,
             "y": self.canvas_height // 2,
             "angle": 0.0,
             "bones": [],
         }
-        self.sprites_path = f"sprites_{file_stem}"
         self.puppet = puppet.Puppet(puppet_json, [])
+        self.background_image_path = ""
+        self._apply_background_image()
         self.sprites = []
         self.sprite_paths = []
         self.bones = self._collect_bones(self.puppet)
@@ -1851,6 +2161,15 @@ class MainWindow(QtWidgets.QMainWindow):
         canvas_rect = QtCore.QRectF(offset_x, offset_y, self.canvas_width, self.canvas_height)
 
         self.canvas_bg_item.setRect(canvas_rect)
+        background_pixmap = self.canvas_image_item.pixmap()
+        if background_pixmap.isNull():
+            self.canvas_image_item.setVisible(False)
+            self.canvas_image_item.setPos(canvas_rect.topLeft())
+        else:
+            bg_x = canvas_rect.left() + (canvas_rect.width() - background_pixmap.width()) / 2.0
+            bg_y = canvas_rect.top() + (canvas_rect.height() - background_pixmap.height()) / 2.0
+            self.canvas_image_item.setVisible(True)
+            self.canvas_image_item.setPos(bg_x, bg_y)
         self.border_item.setRect(canvas_rect.adjusted(0.5, 0.5, -0.5, -0.5))
         self.puppet_item.setPos(canvas_rect.topLeft())
         self.puppet_item.set_draw_offset(0, 0)
@@ -1877,6 +2196,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.information(self, "Save Puppet", "Open a puppet file first.")
             return False
         try:
+            self._sync_puppet_paths()
             puppetExporter.save_puppet(
                 self.puppet,
                 self.puppet_file_base,
@@ -1914,6 +2234,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.puppet_file_base = os.path.splitext(selected_path)[0]
         self.settings["lastPuppetFile"] = selected_path
         self._update_window_title()
+        self._sync_puppet_paths()
         puppetExporter.save_puppet(
             self.puppet,
             self.puppet_file_base,

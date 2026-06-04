@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import tempfile
 
 
 def add_bones(bones):
@@ -39,6 +40,54 @@ def _c_float(value):
     return f"{text}f"
 
 
+def _c_int(value):
+    try:
+        return int(round(float(value)))
+    except Exception:
+        return 0
+
+
+def _c_uint(value):
+    return max(0, _c_int(value))
+
+
+def _c_base_sprite_angle(value):
+    return _c_float(value)
+
+
+def _c_sprite_index(value):
+    index = _c_int(value)
+    if index < 0:
+        return 255
+    return max(0, min(255, index))
+
+
+def _normalize_sprite_mirror_axis(value):
+    text = str(value or "").strip().lower()
+    if not text or text == "none":
+        return "none"
+
+    has_x = "x" in text
+    has_y = "y" in text
+    if has_x and has_y:
+        return "xy"
+    if has_x:
+        return "x"
+    if has_y:
+        return "y"
+    return "none"
+
+
+def _sprite_mirror_axis_bits(value):
+    axis = _normalize_sprite_mirror_axis(value)
+    bits = 0
+    if "x" in axis:
+        bits |= 1
+    if "y" in axis:
+        bits |= 2
+    return bits
+
+
 def _flatten_bones(bones, parent_index=-1, parent_layer=0, flattened=None):
     if flattened is None:
         flattened = []
@@ -52,6 +101,7 @@ def _flatten_bones(bones, parent_index=-1, parent_layer=0, flattened=None):
                 "angle": bone.angle,
                 "spriteIndex": bone.spriteIndex,
                 "baseSpriteRotation": bone.baseSpriteRotation,
+                "spriteMirrorAxis": _normalize_sprite_mirror_axis(getattr(bone, "spriteMirrorAxis", "none")),
                 "parentIndex": parent_index,
                 "parentLayer": parent_layer,
             }
@@ -249,6 +299,170 @@ def _normalize_animations(animations):
     return clips
 
 
+def _bone_children(bone, layer):
+    attr_name = "childBonesLayer1" if layer == 1 else "childBonesLayer2"
+    value = getattr(bone, attr_name, [])
+    return value if isinstance(value, list) else []
+
+
+def _bone_child_array_name(symbol_base, path, bone_index, layer):
+    return f"{symbol_base}_{path}_{bone_index}_childPuppetBonesLayer{layer}"
+
+
+def _register_bone_pointer_expressions(bones, symbol_base, array_name, path, label_map):
+    for idx, bone in enumerate(bones):
+        label = str(getattr(bone, "label", "") or "")
+        if label and label not in label_map:
+            label_map[label] = f"&{array_name}[{idx}]"
+
+        layer1 = _bone_children(bone, 1)
+        if layer1:
+            _register_bone_pointer_expressions(
+                layer1,
+                symbol_base,
+                _bone_child_array_name(symbol_base, path, idx, 1),
+                f"{path}_{idx}_l1",
+                label_map,
+            )
+
+        layer2 = _bone_children(bone, 2)
+        if layer2:
+            _register_bone_pointer_expressions(
+                layer2,
+                symbol_base,
+                _bone_child_array_name(symbol_base, path, idx, 2),
+                f"{path}_{idx}_l2",
+                label_map,
+            )
+
+
+def _emit_bone_array(lines, symbol_base, array_name, bones, path):
+    for idx, bone in enumerate(bones):
+        layer1 = _bone_children(bone, 1)
+        if layer1:
+            _emit_bone_array(
+                lines,
+                symbol_base,
+                _bone_child_array_name(symbol_base, path, idx, 1),
+                layer1,
+                f"{path}_{idx}_l1",
+            )
+
+        layer2 = _bone_children(bone, 2)
+        if layer2:
+            _emit_bone_array(
+                lines,
+                symbol_base,
+                _bone_child_array_name(symbol_base, path, idx, 2),
+                layer2,
+                f"{path}_{idx}_l2",
+            )
+
+    if not bones:
+        return
+
+    lines.append(f"static const RawPuppetBone {array_name}[] = {{")
+    for idx, bone in enumerate(bones):
+        layer1 = _bone_children(bone, 1)
+        layer2 = _bone_children(bone, 2)
+        layer1_array = _bone_child_array_name(symbol_base, path, idx, 1) if layer1 else "NULL"
+        layer2_array = _bone_child_array_name(symbol_base, path, idx, 2) if layer2 else "NULL"
+
+        lines.extend(
+            [
+                "    {",
+                f"        .label = {_c_string(getattr(bone, 'label', ''))},",
+                f"        .x = {_c_int(getattr(bone, 'x', 0))},",
+                f"        .y = {_c_int(getattr(bone, 'y', 0))},",
+                f"        .angle = {_c_float(getattr(bone, 'angle', 0.0))},",
+                f"        .spriteIndex = {_c_sprite_index(getattr(bone, 'spriteIndex', -1))},",
+                f"        .baseSpriteAngle = {_c_base_sprite_angle(getattr(bone, 'baseSpriteRotation', 0.0))},",
+                f"        .childPuppetBonesLayer1 = {layer1_array},",
+                f"        .childPuppetBonesNumLayer1 = {len(layer1)},",
+                f"        .childPuppetBonesLayer2 = {layer2_array},",
+                f"        .childPuppetBonesNumLayer2 = {len(layer2)},",
+                "    },",
+            ]
+        )
+    lines.append("};")
+    lines.append("")
+
+
+def _clip_symbol(symbol_base, clip_name, clip_index):
+    cleaned = _sanitize_identifier(clip_name)
+    if cleaned == "puppet":
+        cleaned = f"clip{clip_index + 1}"
+    return f"{symbol_base}_{cleaned}"
+
+
+def _emit_clip_timelines(lines, symbol_base, clip, clip_index, bone_pointers, root_label):
+    clip_base = _clip_symbol(symbol_base, clip.get("animationName", ""), clip_index)
+    pair_entries = []
+
+    for track_index, track in enumerate(clip.get("tracks", [])):
+        bone_label = str(track.get("boneLabel", "") or "")
+        keyframes = track.get("keyframes", [])
+        if not bone_label or not keyframes:
+            continue
+
+        bone_expr = bone_pointers.get(bone_label)
+        if bone_expr is None and bone_label == root_label:
+            bone_expr = "NULL"
+        if bone_expr is None:
+            lines.append(f"/* Skipped animation track for unknown bone: {_c_string(bone_label)}. */")
+            continue
+
+        frames_array_name = f"{clip_base}_track{track_index}_frames"
+        animation_name = f"{clip_base}_track{track_index}_animation"
+        lines.append(f"static const RawFrame {frames_array_name}[] = {{")
+        for keyframe in keyframes:
+            start_frame = _c_uint(keyframe.get("timelineFrame", 0))
+            lines.append(
+                f"    {{.x = {_c_int(keyframe.get('x', 0))}, .y = {_c_int(keyframe.get('y', 0))}, "
+                f".angle = {_c_float(keyframe.get('angle', 0.0))}, .startFrameNum = {start_frame}}},"
+            )
+        lines.append("};")
+        lines.append("")
+
+        lines.append(f"static const RawAnimation {animation_name} = {{")
+        lines.append(f"    .frames = {frames_array_name},")
+        lines.append(f"    .framesNum = {len(keyframes)},")
+        lines.append("};")
+        lines.append("")
+
+        pair_entries.append((animation_name, bone_expr, bone_label))
+
+    pairs_array_name = "NULL"
+    if pair_entries:
+        pairs_array_name = f"{clip_base}_boneAnimationPairs"
+        lines.append(f"static const RawBoneAnimationPair {pairs_array_name}[] = {{")
+        for animation_name, bone_expr, bone_label in pair_entries:
+            root_comment = " /* root puppet */" if bone_expr == "NULL" and bone_label == root_label else ""
+            lines.append(f"    {{.rawBone = {bone_expr}, .rawAnimation = &{animation_name}}},{root_comment}")
+        lines.append("};")
+        lines.append("")
+
+    return {
+        "clipBase": clip_base,
+        "pairsArrayName": pairs_array_name,
+        "pairsCount": len(pair_entries),
+    }
+
+
+def _emit_puppet_instance(lines, symbol_name, puppet, puppet_bones_array, puppet_bones_num, clip_entry):
+    lines.append(f"const RawPuppet {symbol_name} = {{")
+    lines.append(f"    .label = {_c_string(getattr(puppet, 'label', ''))},")
+    lines.append(f"    .x = {_c_int(getattr(puppet, 'x', 0))},")
+    lines.append(f"    .y = {_c_int(getattr(puppet, 'y', 0))},")
+    lines.append(f"    .angle = {_c_float(getattr(puppet, 'angle', 0.0))},")
+    lines.append(f"    .puppetBones = {puppet_bones_array},")
+    lines.append(f"    .puppetBonesNum = {puppet_bones_num},")
+    lines.append(f"    .boneAnimationPairs = {clip_entry['pairsArrayName']},")
+    lines.append(f"    .boneAnimationPairsNum = {clip_entry['pairsCount']},")
+    lines.append("};")
+    lines.append("")
+
+
 def save_puppet(puppet, filename_base, animations=None):
     puppet_path = f"{filename_base}.json"
     backup_path = f"{filename_base}_backup.json"
@@ -271,182 +485,124 @@ def save_settings(settings, settings_path="settings.json"):
         json.dump(settings, f, indent=4, ensure_ascii=False)
 
 
+def _write_text_overwrite(output_path, text):
+    output_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+    output_name = os.path.basename(output_path)
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            delete=False,
+            dir=output_dir,
+            prefix=f".{output_name}.",
+            suffix=".tmp",
+        ) as f:
+            temp_path = f.name
+            f.write(text)
+        os.replace(temp_path, output_path)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def export_cpuppet(puppet, filename_base, animations=None, sprites_path=None):
     output_path = f"{filename_base}.c"
     symbol_base = _sanitize_identifier(os.path.basename(str(filename_base)) or getattr(puppet, "label", "puppet"))
 
     puppet_label = str(getattr(puppet, "label", ""))
-    if sprites_path is None:
-        sprites_path = f"sprites_{puppet_label.replace('Root', '')}"
+    puppet_bones = getattr(puppet, "bones", [])
+    if not isinstance(puppet_bones, list):
+        puppet_bones = []
+    clips = _normalize_animations(animations)[:1]
+    puppet_bones_array = f"{symbol_base}_puppetBones" if puppet_bones else "NULL"
 
-    bones = _flatten_bones(getattr(puppet, "bones", []))
-    clips = _normalize_animations(animations)
+    bone_pointers = {}
+    if puppet_bones:
+        _register_bone_pointer_expressions(puppet_bones, symbol_base, puppet_bones_array, "root", bone_pointers)
 
     lines = [
         "/* Auto-generated by Puppet Craft. */",
-        "/* parentLayer: 0=root bone, 1=childBonesLayer1, 2=childBonesLayer2 */",
+        "/* Export format: RawPuppet, RawPuppetBone, RawAnimation and RawBoneAnimationPair. */",
+        "/* baseSpriteAngle is exported in radians. */",
+        "/* spriteIndex 255 means no sprite, converted from Puppet Craft's -1 sentinel. */",
+        "/* spriteMirrorAxis is stored in JSON but is not represented by the RawPuppetBone struct. */",
+        "/* A NULL rawBone in RawBoneAnimationPair targets the root RawPuppet track. */",
         "#include <stddef.h>",
+        "#include <stdint.h>",
         "",
-        "typedef struct {",
+        "typedef struct",
+        "{",
+        "    const int x;",
+        "    const int y;",
+        "    const float angle;",
+        "    const int startFrameNum;",
+        "} RawFrame;",
+        "",
+        "typedef struct",
+        "{",
+        "    const RawFrame *frames;",
+        "    const uint16_t framesNum;",
+        "} RawAnimation;",
+        "",
+        "typedef struct RawPuppetBone RawPuppetBone;",
+        "",
+        "typedef struct RawPuppetBone",
+        "{",
         "    const char *label;",
-        "    float x;",
-        "    float y;",
-        "    float angle;",
-        "    int spriteIndex;",
-        "    float baseSpriteRotation;",
-        "    int parentIndex;",
-        "    int parentLayer;",
-        "} PuppetCraftBone;",
+        "    const int16_t x;",
+        "    const int16_t y;",
+        "    const float angle;",
+        "    const uint8_t spriteIndex;",
+        "    const float baseSpriteAngle;",
+        "    const RawPuppetBone *childPuppetBonesLayer1;",
+        "    const uint8_t childPuppetBonesNumLayer1;",
+        "    const RawPuppetBone *childPuppetBonesLayer2;",
+        "    const uint8_t childPuppetBonesNumLayer2;",
+        "} RawPuppetBone;",
         "",
-        "typedef struct {",
-        "    float x;",
-        "    float y;",
-        "    float angle;",
-        "    int timelineFrame;",
+        "typedef struct",
+        "{",
+        "    const RawPuppetBone *rawBone;",
+        "    const RawAnimation *rawAnimation;",
+        "} RawBoneAnimationPair;",
+        "",
+        "typedef struct",
+        "{",
         "    const char *label;",
-        "} PuppetCraftKeyframe;",
-        "",
-        "typedef struct {",
-        "    float x;",
-        "    float y;",
-        "    float angle;",
-        "} PuppetCraftDeltaFrame;",
-        "",
-        "typedef struct {",
-        "    const char *boneLabel;",
-        "    const PuppetCraftKeyframe *keyframes;",
-        "    int keyframeCount;",
-        "    const PuppetCraftDeltaFrame *bakedFrames;",
-        "    int bakedFrameCount;",
-        "    int timelineStart;",
-        "    int timelineEnd;",
-        "} PuppetCraftTrack;",
-        "",
-        "typedef struct {",
-        "    const char *animationName;",
-        "    const PuppetCraftTrack *tracks;",
-        "    int trackCount;",
-        "} PuppetCraftAnimation;",
-        "",
-        "typedef struct {",
-        "    const char *label;",
-        "    const char *spritesPath;",
-        "    float x;",
-        "    float y;",
-        "    float angle;",
-        "    const PuppetCraftBone *bones;",
-        "    int boneCount;",
-        "    const PuppetCraftAnimation *animations;",
-        "    int animationCount;",
-        "} PuppetCraftExport;",
+        "    const int16_t x;",
+        "    const int16_t y;",
+        "    const float angle;",
+        "    const RawPuppetBone *puppetBones;",
+        "    const uint8_t puppetBonesNum;",
+        "    const RawBoneAnimationPair *boneAnimationPairs;",
+        "    const uint8_t boneAnimationPairsNum;",
+        "} RawPuppet;",
         "",
     ]
 
-    bone_array_name = f"{symbol_base}_bones"
-    if bones:
-        lines.append(f"static const PuppetCraftBone {bone_array_name}[] = {{")
-        for bone in bones:
-            lines.append(
-                f"    {{{_c_string(bone['label'])}, {_c_float(bone['x'])}, {_c_float(bone['y'])}, {_c_float(bone['angle'])}, "
-                f"{int(bone['spriteIndex'])}, {_c_float(bone['baseSpriteRotation'])}, {int(bone['parentIndex'])}, {int(bone['parentLayer'])}}},"
-            )
-        lines.append("};")
-        lines.append("")
+    if puppet_bones:
+        _emit_bone_array(lines, symbol_base, puppet_bones_array, puppet_bones, "root")
 
     clip_entries = []
     for clip_index, clip in enumerate(clips):
-        tracks = clip.get("tracks", [])
-        track_entries = []
-        for track_index, track in enumerate(tracks):
-            keyframes = track.get("keyframes", [])
-            if not keyframes:
-                continue
-            timeline_start = int(keyframes[0].get("timelineFrame", 0))
-            timeline_end = int(keyframes[-1].get("timelineFrame", timeline_start))
-            keyframe_array_name = f"{symbol_base}_clip{clip_index}_track{track_index}_keyframes"
-            lines.append(f"static const PuppetCraftKeyframe {keyframe_array_name}[] = {{")
-            for keyframe in keyframes:
-                lines.append(
-                    f"    {{{_c_float(keyframe.get('x', 0.0))}, {_c_float(keyframe.get('y', 0.0))}, {_c_float(keyframe.get('angle', 0.0))}, "
-                    f"{int(keyframe.get('timelineFrame', 0))}, {_c_string(keyframe.get('label', ''))}}},"
-                )
-            lines.append("};")
-            lines.append("")
+        clip_entries.append(_emit_clip_timelines(lines, symbol_base, clip, clip_index, bone_pointers, puppet_label))
 
-            baked_frames = _build_baked_frames(keyframes)
-            baked_array_name = "NULL"
-            if baked_frames:
-                baked_array_name = f"{symbol_base}_clip{clip_index}_track{track_index}_baked_frames"
-                lines.append(f"static const PuppetCraftDeltaFrame {baked_array_name}[] = {{")
-                for frame in baked_frames:
-                    lines.append(
-                        f"    {{{_c_float(frame.get('x', 0.0))}, {_c_float(frame.get('y', 0.0))}, {_c_float(frame.get('angle', 0.0))}}},"
-                    )
-                lines.append("};")
-                lines.append("")
+    empty_clip_entry = {
+        "pairsArrayName": "NULL",
+        "pairsCount": 0,
+    }
+    default_clip_entry = clip_entries[0] if clip_entries else empty_clip_entry
 
-            track_entries.append(
-                {
-                    "boneLabel": track.get("boneLabel", ""),
-                    "arrayName": keyframe_array_name,
-                    "count": len(keyframes),
-                    "bakedArrayName": baked_array_name,
-                    "bakedCount": len(baked_frames),
-                    "timelineStart": timeline_start,
-                    "timelineEnd": timeline_end,
-                }
-            )
+    _emit_puppet_instance(
+        lines,
+        symbol_base,
+        puppet,
+        puppet_bones_array,
+        len(puppet_bones),
+        default_clip_entry,
+    )
 
-        tracks_array_name = f"{symbol_base}_clip{clip_index}_tracks"
-        if track_entries:
-            lines.append(f"static const PuppetCraftTrack {tracks_array_name}[] = {{")
-            for track_entry in track_entries:
-                lines.append(
-                    f"    {{{_c_string(track_entry['boneLabel'])}, {track_entry['arrayName']}, {track_entry['count']}, "
-                    f"{track_entry['bakedArrayName']}, {track_entry['bakedCount']}, {track_entry['timelineStart']}, {track_entry['timelineEnd']}}},"
-                )
-            lines.append("};")
-            lines.append("")
-            clip_entries.append(
-                {
-                    "animationName": clip.get("animationName", ""),
-                    "tracksArrayName": tracks_array_name,
-                    "trackCount": len(track_entries),
-                }
-            )
-        else:
-            clip_entries.append(
-                {
-                    "animationName": clip.get("animationName", ""),
-                    "tracksArrayName": "NULL",
-                    "trackCount": 0,
-                }
-            )
-
-    clips_array_name = f"{symbol_base}_animations"
-    if clip_entries:
-        lines.append(f"static const PuppetCraftAnimation {clips_array_name}[] = {{")
-        for clip_entry in clip_entries:
-            lines.append(
-                f"    {{{_c_string(clip_entry['animationName'])}, {clip_entry['tracksArrayName']}, {clip_entry['trackCount']}}},"
-            )
-        lines.append("};")
-        lines.append("")
-
-    lines.append(f"const PuppetCraftExport {symbol_base}_export = {{")
-    lines.append(f"    {_c_string(puppet_label)},")
-    lines.append(f"    {_c_string(sprites_path)},")
-    lines.append(f"    {_c_float(getattr(puppet, 'x', 0.0))},")
-    lines.append(f"    {_c_float(getattr(puppet, 'y', 0.0))},")
-    lines.append(f"    {_c_float(getattr(puppet, 'angle', 0.0))},")
-    lines.append(f"    {bone_array_name if bones else 'NULL'},")
-    lines.append(f"    {len(bones)},")
-    lines.append(f"    {clips_array_name if clip_entries else 'NULL'},")
-    lines.append(f"    {len(clip_entries)},")
-    lines.append("};")
-
-    with open(output_path, "w") as f:
-        f.write("\n".join(lines) + "\n")
+    _write_text_overwrite(output_path, "\n".join(lines) + "\n")
 
 
 def save_to_file(puppet, settings, filename, animations=None, sprites_path=None):

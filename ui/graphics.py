@@ -24,6 +24,12 @@ class PuppetItem(QtWidgets.QGraphicsItem):
         self._ghost_sprite_positions = {}
         self._ghost_opacity = 0.5
 
+    def _mirror_scale_for_bone(self, bone):
+        axis = str(getattr(bone, "spriteMirrorAxis", "none") or "").strip().lower()
+        sx = -1.0 if "x" in axis else 1.0
+        sy = -1.0 if "y" in axis else 1.0
+        return sx, sy
+
     def boundingRect(self):
         # Oversized rect to avoid clipping; scene rect controls viewport anyway.
         return QtCore.QRectF(-2000, -2000, 4000, 4000)
@@ -191,6 +197,9 @@ class PuppetItem(QtWidgets.QGraphicsItem):
                 painter.setOpacity(self._ghost_opacity)
                 painter.translate(ghost_center_x, ghost_center_y)
                 painter.rotate(math.degrees(ghost_angle))
+                sx, sy = self._mirror_scale_for_bone(bone)
+                if sx != 1.0 or sy != 1.0:
+                    painter.scale(sx, sy)
                 painter.drawImage(QtCore.QPointF(-size / 2, -size / 2), ghost_image)
                 painter.restore()
 
@@ -204,6 +213,9 @@ class PuppetItem(QtWidgets.QGraphicsItem):
         painter.save()
         painter.translate(center_x, center_y)
         painter.rotate(math.degrees(angle))
+        sx, sy = self._mirror_scale_for_bone(bone)
+        if sx != 1.0 or sy != 1.0:
+            painter.scale(sx, sy)
         painter.drawImage(QtCore.QPointF(-size / 2, -size / 2), sprite_image)
         painter.restore()
 
