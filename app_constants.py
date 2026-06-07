@@ -5,4 +5,5 @@ DEFAULT_SETTINGS = {
     "isTextVisible": True,
     "isBoneVisible": True,
     "isGhostVisible": True,
+    "spriteExportIndexOffset": 0,
 }

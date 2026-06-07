@@ -16,6 +16,21 @@ def normalize_sprite_mirror_axis(value):
         return "y"
     return "none"
 
+
+def puppet_mirror_axis_inverts_sprite_rotation_direction(value):
+    axis = normalize_sprite_mirror_axis(value)
+    return axis in ("x", "y")
+
+
+def invert_base_sprite_rotation(value):
+    try:
+        numeric = float(value)
+    except Exception:
+        return value
+    if not math.isfinite(numeric):
+        return value
+    return -numeric
+
 class Sprite:
     def __init__(self,label,size,pixels):
         self.label=label
@@ -23,13 +38,15 @@ class Sprite:
         self.pixels=pixels
 
 class Bone:
-    def __init__(self,boneJson,sprites,parentWorldMatrix):
+    def __init__(self,boneJson,sprites,parentWorldMatrix,invertBaseSpriteRotation=False):
         self.label=boneJson["label"]
         self.x=boneJson["x"]
         self.y=boneJson["y"]
         self.angle=boneJson["angle"]
         self.spriteIndex=boneJson["spriteIndex"]
         self.baseSpriteRotation=boneJson["baseSpriteRotation"]
+        if invertBaseSpriteRotation:
+            self.baseSpriteRotation=invert_base_sprite_rotation(self.baseSpriteRotation)
         self.spriteMirrorAxis=normalize_sprite_mirror_axis(boneJson.get("spriteMirrorAxis", "none"))
         if(self.spriteIndex>=0):
             self.sprite=sprites[self.spriteIndex]
@@ -38,9 +55,9 @@ class Bone:
         self.childBonesLayer1=[]
         self.childBonesLayer2=[]
         for bone in boneJson["childBonesLayer1"]:
-            self.childBonesLayer1.append(Bone(bone,sprites,self.worldMatrix))
+            self.childBonesLayer1.append(Bone(bone,sprites,self.worldMatrix,invertBaseSpriteRotation))
         for bone in boneJson["childBonesLayer2"]:
-            self.childBonesLayer2.append(Bone(bone,sprites,self.worldMatrix))
+            self.childBonesLayer2.append(Bone(bone,sprites,self.worldMatrix,invertBaseSpriteRotation))
         
     def get_bone_dict(self):
         data= {
@@ -74,13 +91,15 @@ class Puppet:
         self.x=puppetJson["x"]
         self.y=puppetJson["y"]
         self.angle=puppetJson["angle"]
+        self.puppetMirrorAxis=normalize_sprite_mirror_axis(puppetJson.get("puppetMirrorAxis", "none"))
         self.spritesPath=str(puppetJson.get("spritesPath") or f"sprites_{(self.label).replace('Root','')}")
         self.backgroundImagePath=str(puppetJson.get("backgroundImagePath") or "")
         self.bones=[]
         self.localMatrix=numpy.array([[math.cos(self.angle),-math.sin(self.angle),int(round(self.x))],[math.sin(self.angle),math.cos(self.angle),int(round(self.y))],[0,0,1]])
         self.worldMatrix=self.localMatrix
+        invertBaseSpriteRotation=puppet_mirror_axis_inverts_sprite_rotation_direction(self.puppetMirrorAxis)
         for boneJson in puppetJson["bones"]:  
-            self.bones.append(Bone(boneJson,sprites,self.worldMatrix))
+            self.bones.append(Bone(boneJson,sprites,self.worldMatrix,invertBaseSpriteRotation))
         self.bonesNum=len(self.bones)
         
     def get_puppet_dict(self):
@@ -91,6 +110,7 @@ class Puppet:
             "x": self.x,
             "y": self.y,
             "angle": self.angle,
+            "puppetMirrorAxis": self.puppetMirrorAxis,
             "bones": []
         }
     

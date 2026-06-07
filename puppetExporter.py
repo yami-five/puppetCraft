@@ -1,13 +1,61 @@
 import json
+import math
 import os
 import re
 import tempfile
 
 
-def add_bones(bones):
+def _float_or_zero(value):
+    try:
+        numeric = float(value)
+    except Exception:
+        return 0.0
+    if not math.isfinite(numeric):
+        return 0.0
+    return numeric
+
+
+def _puppet_inverts_sprite_rotation_direction(puppet):
+    axis = _normalize_sprite_mirror_axis(getattr(puppet, "puppetMirrorAxis", "none"))
+    return axis in ("x", "y")
+
+
+def _euzebia_base_sprite_rotation(value, invert_direction=False):
+    angle = _float_or_zero(value)
+    if invert_direction and angle != 0.0:
+        return -angle
+    return angle
+
+
+def _apply_euzebia_sprite_rotation_workaround(bone_data, invert_direction=False):
+    bone_data["baseSpriteRotation"] = _euzebia_base_sprite_rotation(
+        bone_data.get("baseSpriteRotation", 0.0),
+        invert_direction=invert_direction,
+    )
+
+    for child_layer in ("childBonesLayer1", "childBonesLayer2"):
+        children = bone_data.get(child_layer, [])
+        if not isinstance(children, list):
+            bone_data[child_layer] = []
+            continue
+        bone_data[child_layer] = [
+            _apply_euzebia_sprite_rotation_workaround(child, invert_direction=invert_direction)
+            for child in children
+            if isinstance(child, dict)
+        ]
+
+    return bone_data
+
+
+def add_bones(bones, invert_sprite_rotation_direction=False):
     data = []
     for i in range(len(bones)):
-        data.append(bones[i].get_bone_dict())
+        data.append(
+            _apply_euzebia_sprite_rotation_workaround(
+                bones[i].get_bone_dict(),
+                invert_direction=invert_sprite_rotation_direction,
+            )
+        )
     return data
 
 
@@ -51,14 +99,15 @@ def _c_uint(value):
     return max(0, _c_int(value))
 
 
-def _c_base_sprite_angle(value):
-    return _c_float(value)
+def _c_base_sprite_angle(value, invert_direction=False):
+    return _c_float(_euzebia_base_sprite_rotation(value, invert_direction=invert_direction))
 
 
-def _c_sprite_index(value):
+def _c_sprite_index(value, offset=0):
     index = _c_int(value)
     if index < 0:
         return 255
+    index += _c_int(offset)
     return max(0, min(255, index))
 
 
@@ -88,7 +137,13 @@ def _sprite_mirror_axis_bits(value):
     return bits
 
 
-def _flatten_bones(bones, parent_index=-1, parent_layer=0, flattened=None):
+def _flatten_bones(
+    bones,
+    parent_index=-1,
+    parent_layer=0,
+    flattened=None,
+    invert_sprite_rotation_direction=False,
+):
     if flattened is None:
         flattened = []
     for bone in bones:
@@ -100,14 +155,29 @@ def _flatten_bones(bones, parent_index=-1, parent_layer=0, flattened=None):
                 "y": bone.y,
                 "angle": bone.angle,
                 "spriteIndex": bone.spriteIndex,
-                "baseSpriteRotation": bone.baseSpriteRotation,
+                "baseSpriteRotation": _euzebia_base_sprite_rotation(
+                    bone.baseSpriteRotation,
+                    invert_direction=invert_sprite_rotation_direction,
+                ),
                 "spriteMirrorAxis": _normalize_sprite_mirror_axis(getattr(bone, "spriteMirrorAxis", "none")),
                 "parentIndex": parent_index,
                 "parentLayer": parent_layer,
             }
         )
-        _flatten_bones(bone.childBonesLayer1, index, 1, flattened)
-        _flatten_bones(bone.childBonesLayer2, index, 2, flattened)
+        _flatten_bones(
+            bone.childBonesLayer1,
+            index,
+            1,
+            flattened,
+            invert_sprite_rotation_direction=invert_sprite_rotation_direction,
+        )
+        _flatten_bones(
+            bone.childBonesLayer2,
+            index,
+            2,
+            flattened,
+            invert_sprite_rotation_direction=invert_sprite_rotation_direction,
+        )
     return flattened
 
 
@@ -305,6 +375,18 @@ def _bone_children(bone, layer):
     return value if isinstance(value, list) else []
 
 
+class _ExportRootBone:
+    def __init__(self, puppet, child_bones):
+        self.label = getattr(puppet, "label", "")
+        self.x = getattr(puppet, "x", 0)
+        self.y = getattr(puppet, "y", 0)
+        self.angle = getattr(puppet, "angle", 0.0)
+        self.spriteIndex = -1
+        self.baseSpriteRotation = 0.0
+        self.childBonesLayer1 = child_bones if isinstance(child_bones, list) else []
+        self.childBonesLayer2 = []
+
+
 def _bone_child_array_name(symbol_base, path, bone_index, layer):
     return f"{symbol_base}_{path}_{bone_index}_childPuppetBonesLayer{layer}"
 
@@ -336,7 +418,15 @@ def _register_bone_pointer_expressions(bones, symbol_base, array_name, path, lab
             )
 
 
-def _emit_bone_array(lines, symbol_base, array_name, bones, path):
+def _emit_bone_array(
+    lines,
+    symbol_base,
+    array_name,
+    bones,
+    path,
+    invert_sprite_rotation_direction=False,
+    sprite_index_offset=0,
+):
     for idx, bone in enumerate(bones):
         layer1 = _bone_children(bone, 1)
         if layer1:
@@ -346,6 +436,8 @@ def _emit_bone_array(lines, symbol_base, array_name, bones, path):
                 _bone_child_array_name(symbol_base, path, idx, 1),
                 layer1,
                 f"{path}_{idx}_l1",
+                invert_sprite_rotation_direction=invert_sprite_rotation_direction,
+                sprite_index_offset=sprite_index_offset,
             )
 
         layer2 = _bone_children(bone, 2)
@@ -356,6 +448,8 @@ def _emit_bone_array(lines, symbol_base, array_name, bones, path):
                 _bone_child_array_name(symbol_base, path, idx, 2),
                 layer2,
                 f"{path}_{idx}_l2",
+                invert_sprite_rotation_direction=invert_sprite_rotation_direction,
+                sprite_index_offset=sprite_index_offset,
             )
 
     if not bones:
@@ -375,8 +469,9 @@ def _emit_bone_array(lines, symbol_base, array_name, bones, path):
                 f"        .x = {_c_int(getattr(bone, 'x', 0))},",
                 f"        .y = {_c_int(getattr(bone, 'y', 0))},",
                 f"        .angle = {_c_float(getattr(bone, 'angle', 0.0))},",
-                f"        .spriteIndex = {_c_sprite_index(getattr(bone, 'spriteIndex', -1))},",
-                f"        .baseSpriteAngle = {_c_base_sprite_angle(getattr(bone, 'baseSpriteRotation', 0.0))},",
+                f"        .spriteIndex = {_c_sprite_index(getattr(bone, 'spriteIndex', -1), offset=sprite_index_offset)},",
+                "        .baseSpriteAngle = "
+                f"{_c_base_sprite_angle(getattr(bone, 'baseSpriteRotation', 0.0), invert_direction=invert_sprite_rotation_direction)},",
                 f"        .childPuppetBonesLayer1 = {layer1_array},",
                 f"        .childPuppetBonesNumLayer1 = {len(layer1)},",
                 f"        .childPuppetBonesLayer2 = {layer2_array},",
@@ -406,8 +501,6 @@ def _emit_clip_timelines(lines, symbol_base, clip, clip_index, bone_pointers, ro
             continue
 
         bone_expr = bone_pointers.get(bone_label)
-        if bone_expr is None and bone_label == root_label:
-            bone_expr = "NULL"
         if bone_expr is None:
             lines.append(f"/* Skipped animation track for unknown bone: {_c_string(bone_label)}. */")
             continue
@@ -437,7 +530,7 @@ def _emit_clip_timelines(lines, symbol_base, clip, clip_index, bone_pointers, ro
         pairs_array_name = f"{clip_base}_boneAnimationPairs"
         lines.append(f"static const RawBoneAnimationPair {pairs_array_name}[] = {{")
         for animation_name, bone_expr, bone_label in pair_entries:
-            root_comment = " /* root puppet */" if bone_expr == "NULL" and bone_label == root_label else ""
+            root_comment = " /* root bone */" if bone_label == root_label else ""
             lines.append(f"    {{.rawBone = {bone_expr}, .rawAnimation = &{animation_name}}},{root_comment}")
         lines.append("};")
         lines.append("")
@@ -452,9 +545,9 @@ def _emit_clip_timelines(lines, symbol_base, clip, clip_index, bone_pointers, ro
 def _emit_puppet_instance(lines, symbol_name, puppet, puppet_bones_array, puppet_bones_num, clip_entry):
     lines.append(f"const RawPuppet {symbol_name} = {{")
     lines.append(f"    .label = {_c_string(getattr(puppet, 'label', ''))},")
-    lines.append(f"    .x = {_c_int(getattr(puppet, 'x', 0))},")
-    lines.append(f"    .y = {_c_int(getattr(puppet, 'y', 0))},")
-    lines.append(f"    .angle = {_c_float(getattr(puppet, 'angle', 0.0))},")
+    lines.append("    .x = 0,")
+    lines.append("    .y = 0,")
+    lines.append("    .angle = 0.0f,")
     lines.append(f"    .puppetBones = {puppet_bones_array},")
     lines.append(f"    .puppetBonesNum = {puppet_bones_num},")
     lines.append(f"    .boneAnimationPairs = {clip_entry['pairsArrayName']},")
@@ -466,6 +559,7 @@ def _emit_puppet_instance(lines, symbol_name, puppet, puppet_bones_array, puppet
 def save_puppet(puppet, filename_base, animations=None):
     puppet_path = f"{filename_base}.json"
     backup_path = f"{filename_base}_backup.json"
+    invert_sprite_rotation_direction = _puppet_inverts_sprite_rotation_direction(puppet)
 
     if os.path.exists(puppet_path):
         if os.path.exists(backup_path):
@@ -474,7 +568,10 @@ def save_puppet(puppet, filename_base, animations=None):
 
     with open(puppet_path, "w") as f:
         data = puppet.get_puppet_dict()
-        data["bones"] = add_bones(puppet.bones)
+        data["bones"] = add_bones(
+            puppet.bones,
+            invert_sprite_rotation_direction=invert_sprite_rotation_direction,
+        )
         if animations is not None:
             data["animations"] = animations
         json.dump(data, f, indent=4, ensure_ascii=False)
@@ -505,28 +602,39 @@ def _write_text_overwrite(output_path, text):
             os.remove(temp_path)
 
 
-def export_cpuppet(puppet, filename_base, animations=None, sprites_path=None):
+def export_cpuppet(puppet, filename_base, animations=None, sprites_path=None, sprite_index_offset=0):
     output_path = f"{filename_base}.c"
     symbol_base = _sanitize_identifier(os.path.basename(str(filename_base)) or getattr(puppet, "label", "puppet"))
+    invert_sprite_rotation_direction = _puppet_inverts_sprite_rotation_direction(puppet)
+    sprite_index_offset = _c_int(sprite_index_offset)
 
     puppet_label = str(getattr(puppet, "label", ""))
     puppet_bones = getattr(puppet, "bones", [])
     if not isinstance(puppet_bones, list):
         puppet_bones = []
+    exported_root_bone = _ExportRootBone(puppet, puppet_bones)
+    exported_puppet_bones = [exported_root_bone]
     clips = _normalize_animations(animations)[:1]
-    puppet_bones_array = f"{symbol_base}_puppetBones" if puppet_bones else "NULL"
+    puppet_bones_array = f"{symbol_base}_puppetBones"
 
     bone_pointers = {}
-    if puppet_bones:
-        _register_bone_pointer_expressions(puppet_bones, symbol_base, puppet_bones_array, "root", bone_pointers)
+    _register_bone_pointer_expressions(
+        exported_puppet_bones,
+        symbol_base,
+        puppet_bones_array,
+        "root",
+        bone_pointers,
+    )
 
     lines = [
         "/* Auto-generated by Puppet Craft. */",
         "/* Export format: RawPuppet, RawPuppetBone, RawAnimation and RawBoneAnimationPair. */",
+        "/* RawPuppet.puppetBones[0] is the exported root bone; RawPuppet x/y/angle are neutral. */",
         "/* baseSpriteAngle is exported in radians. */",
+        "/* Sprite base rotation direction is inverted when puppetMirrorAxis is x or y. */",
         "/* spriteIndex 255 means no sprite, converted from Puppet Craft's -1 sentinel. */",
+        f"/* Exported spriteIndex values include sprite_index_offset = {sprite_index_offset}. */",
         "/* spriteMirrorAxis is stored in JSON but is not represented by the RawPuppetBone struct. */",
-        "/* A NULL rawBone in RawBoneAnimationPair targets the root RawPuppet track. */",
         "#include <stddef.h>",
         "#include <stdint.h>",
         "",
@@ -580,8 +688,15 @@ def export_cpuppet(puppet, filename_base, animations=None, sprites_path=None):
         "",
     ]
 
-    if puppet_bones:
-        _emit_bone_array(lines, symbol_base, puppet_bones_array, puppet_bones, "root")
+    _emit_bone_array(
+        lines,
+        symbol_base,
+        puppet_bones_array,
+        exported_puppet_bones,
+        "root",
+        invert_sprite_rotation_direction=invert_sprite_rotation_direction,
+        sprite_index_offset=sprite_index_offset,
+    )
 
     clip_entries = []
     for clip_index, clip in enumerate(clips):
@@ -598,7 +713,7 @@ def export_cpuppet(puppet, filename_base, animations=None, sprites_path=None):
         symbol_base,
         puppet,
         puppet_bones_array,
-        len(puppet_bones),
+        len(exported_puppet_bones),
         default_clip_entry,
     )
 
@@ -609,4 +724,10 @@ def save_to_file(puppet, settings, filename, animations=None, sprites_path=None)
     # Backward-compatible wrapper for older call sites.
     save_puppet(puppet, filename, animations=animations)
     save_settings(settings)
-    export_cpuppet(puppet, filename, animations=animations, sprites_path=sprites_path)
+    export_cpuppet(
+        puppet,
+        filename,
+        animations=animations,
+        sprites_path=sprites_path,
+        sprite_index_offset=settings.get("spriteExportIndexOffset", 0),
+    )

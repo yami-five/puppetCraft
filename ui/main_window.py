@@ -157,6 +157,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_add_sprites_button.clicked.connect(self._manage_sprites)
         layout.addWidget(self.edit_add_sprites_button)
 
+        sprite_export_offset_row = QtWidgets.QHBoxLayout()
+        sprite_export_offset_row.addWidget(QtWidgets.QLabel("C Sprite Offset"))
+        self.edit_sprite_export_offset_spin = QtWidgets.QSpinBox()
+        self.edit_sprite_export_offset_spin.setRange(0, 255)
+        self.edit_sprite_export_offset_spin.setValue(self._sprite_export_index_offset())
+        self.edit_sprite_export_offset_spin.setToolTip("Added to sprite indexes only when exporting C.")
+        self.edit_sprite_export_offset_spin.valueChanged.connect(self._set_sprite_export_index_offset)
+        sprite_export_offset_row.addWidget(self.edit_sprite_export_offset_spin, 1)
+        layout.addLayout(sprite_export_offset_row)
+
         sprite_rot_row = QtWidgets.QHBoxLayout()
         sprite_rot_row.addWidget(QtWidgets.QLabel("Sprite Rot"))
         self.edit_sprite_rot_left_button = QtWidgets.QPushButton("-90")
@@ -409,6 +419,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if has_y:
             return "y"
         return "none"
+
+    def _sprite_export_index_offset(self):
+        try:
+            value = int(self.settings.get("spriteExportIndexOffset", 0))
+        except Exception:
+            value = 0
+        return max(0, min(255, value))
+
+    def _set_sprite_export_index_offset(self, value):
+        self.settings["spriteExportIndexOffset"] = max(0, min(255, int(value)))
 
     def _child_layers(self, parent):
         if parent is None:
@@ -1115,6 +1135,27 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             bone.spriteMirrorAxis = "none"
 
+    def _toggle_puppet_mirror_axis(self, axis_name):
+        current = self._normalize_sprite_mirror_axis(getattr(self.puppet, "puppetMirrorAxis", "none"))
+        has_x = "x" in current
+        has_y = "y" in current
+
+        if axis_name == "x":
+            has_x = not has_x
+        elif axis_name == "y":
+            has_y = not has_y
+        else:
+            return
+
+        if has_x and has_y:
+            self.puppet.puppetMirrorAxis = "xy"
+        elif has_x:
+            self.puppet.puppetMirrorAxis = "x"
+        elif has_y:
+            self.puppet.puppetMirrorAxis = "y"
+        else:
+            self.puppet.puppetMirrorAxis = "none"
+
     def _mirror_bone_subtree_full(self, bone, axis_name):
         if axis_name == "x":
             bone.x = -float(bone.x)
@@ -1150,6 +1191,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for root_bone in self.puppet.bones:
             self._mirror_bone_subtree_full(root_bone, axis_name)
+        self._toggle_puppet_mirror_axis(axis_name)
 
         self.puppet.recalculate_world_matrices()
         self.puppet_item.update()
@@ -1888,6 +1930,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 settings.update(json.load(f))
         except Exception:
             pass
+        try:
+            settings["spriteExportIndexOffset"] = max(
+                0,
+                min(255, int(settings.get("spriteExportIndexOffset", 0))),
+            )
+        except Exception:
+            settings["spriteExportIndexOffset"] = 0
         return settings
 
     def _select_puppet_file(self):
@@ -2255,6 +2304,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.puppet_file_base,
             animations=self._serialize_animation_clips(),
             sprites_path=self.sprites_path,
+            sprite_index_offset=self._sprite_export_index_offset(),
         )
 
     def keyPressEvent(self, event):
